@@ -105,7 +105,12 @@ def resolve_secret(
     """Liefert ``(geheimnis, quelle)``. Die Quelle ist für Diagnosezwecke gedacht."""
     file_var = f"{env_name}_FILE"
     if os.environ.get(file_var):
-        return read_secret_file(os.environ[file_var], strict=strict), f"file:${file_var}"
+        path = Path(os.environ[file_var]).expanduser()
+        if not path.exists():
+            # Server soll trotzdem starten; Login/Transport melden das Fehlen klar.
+            log.warning("%s zeigt auf eine fehlende Datei: %s", file_var, path)
+            return None, f"missing:${file_var}"
+        return read_secret_file(path, strict=strict), f"file:${file_var}"
 
     if keyring_key:
         from_keyring = keyring_get(keyring_key)

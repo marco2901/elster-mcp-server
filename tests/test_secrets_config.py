@@ -82,3 +82,10 @@ def test_certificate_validation(cert, tmp_path):
 
 def test_submit_disabled_by_default():
     assert get_config().security.allow_submit is False
+
+
+def test_missing_secret_file_does_not_crash(tmp_path, monkeypatch):
+    monkeypatch.setenv("ELSTER_PASSWORD_FILE", str(tmp_path / "fehlt"))
+    cfg = get_config()
+    assert cfg.auth.password is None
+    assert cfg.auth.password_source == "missing:$ELSTER_PASSWORD_FILE"
