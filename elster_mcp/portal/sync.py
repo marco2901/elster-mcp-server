@@ -79,6 +79,25 @@ JS_EXTRACT_INBOX = r"""
 }).filter(Boolean)
 """
 
+# Der Dialog-Inhalt bleibt nach dem Schließen im DOM und wird beim nächsten Öffnen verzögert ersetzt.
+# Bereit ist er erst, wenn er sichtbar ist, den Betreff der Nachricht trägt und eine neue Dokument-ID hat.
+MODAL = ".modal--openOnLoad"
+JS_MODAL_DOC_ID = """
+() => { const e = document.querySelector('.modal--openOnLoad [id^="NachrichtHerunterladen_"][id$="_PDF"]');
+        return e ? e.id : null; }
+"""
+JS_MODAL_READY = """
+([prevId, subject]) => {
+  const m = document.querySelector('.modal--openOnLoad');
+  if (!m || m.getBoundingClientRect().height === 0) return false;
+  const doc = m.querySelector('[id^="NachrichtHerunterladen_"][id$="_PDF"]');
+  if (!doc || doc.id === prevId) return false;
+  const norm = t => (t || '').replace(/\\s+/g, ' ').trim();
+  const title = norm((m.querySelector('.modal__title') || {}).textContent);
+  return !!title && (title === norm(subject) || norm(subject).startsWith(title) || title.startsWith(norm(subject)));
+}
+"""
+
 JS_INBOX_MODAL_HTML = """
 () => {
   const b = document.querySelector('.modal--openOnLoad');
@@ -211,17 +230,7 @@ class SyncFlow(ElsterPortal):
                     break
                 for msg in messages:
                     if download_pdfs:
-                        try:
-                            msg["pdfPath"], msg["attachments"] = await self._inbox_download(page, msg)
-                        except Exception as exc:
-                            log.warning("Download für Nachricht %s fehlgeschlagen: %s", msg["elsterId"], exc)
-                            try:
-                                await page.keyboard.press("Escape")
-                                await self.sleep(0.8)
-                                msg["pdfPath"] = await self._inbox_pdf(page, msg)
-                                msg["attachments"] = []
-                            except Exception as exc2:
-                                log.warning("PDF-Fallback für Nachricht %s fehlgeschlagen: %s", msg["elsterId"], exc2)
+                        await self._download_message(page, msg)
                     collected.append(msg)
 
                 first_before = messages[0]["id"]
@@ -242,24 +251,45 @@ class SyncFlow(ElsterPortal):
                     break
         return collected
 
-    async def _inbox_download(self, page: Page, msg: dict) -> tuple[str | None, list[dict]]:
-        """Lädt über „Mit Anhängen (Zip)" das offizielle Nachrichten-PDF samt aller Anhänge."""
+    async def _download_message(self, page: Page, msg: dict) -> None:
+        try:
+            await self._open_message(page, msg)
+        except Exception as exc:
+            log.warning("Nachricht %s ließ sich nicht öffnen: %s", msg["elsterId"], exc)
+            return
+        try:
+            try:
+                msg["pdfPath"], msg["attachments"] = await self._inbox_download(page, msg)
+            except Exception as exc:
+                log.warning("Download für Nachricht %s fehlgeschlagen: %s", msg["elsterId"], exc)
+                try:
+                    msg["pdfPath"], msg["attachments"] = await self._inbox_pdf(page, msg), []
+                except Exception as exc2:
+                    log.warning("PDF-Fallback für Nachricht %s fehlgeschlagen: %s", msg["elsterId"], exc2)
+        finally:
+            await page.keyboard.press("Escape")
+            await self.sleep(0.8)
+
+    async def _open_message(self, page: Page, msg: dict) -> None:
+        """Öffnet den Nachrichten-Dialog und wartet, bis er wirklich zu *dieser* Nachricht gehört."""
         if not re.fullmatch(r"viewNachricht\d+", msg["id"]):
             raise ValueError("Unerwartete Nachrichten-ID.")
         el = await page.query_selector(f"#{msg['id']}")
         if not el:
             raise ValueError("Nachricht nicht in der Liste gefunden.")
+        prev_doc_id = await page.evaluate(JS_MODAL_DOC_ID)
         await el.scroll_into_view_if_needed()
         await el.click()
-        zip_sel = "#downloadNachrichtMitAnhangButton"
-        pdf_sel = '#nachrichtHerunterladenForm [id^="NachrichtHerunterladen_"][id$="_PDF"]'
-        await page.wait_for_selector(f"{zip_sel}, {pdf_sel}", state="attached", timeout=20000)
-        # Mit Anhängen gibt es den Zip-Export, sonst nur das Nachrichten-PDF.
-        has_zip = await page.locator(zip_sel).count() > 0
-        btn = page.locator(zip_sel if has_zip else pdf_sel).first
+        await page.wait_for_function(JS_MODAL_READY, arg=[prev_doc_id, msg["subject"]], timeout=20000)
+
+    async def _inbox_download(self, page: Page, msg: dict) -> tuple[str | None, list[dict]]:
+        """Offizieller Export aus dem offenen Dialog: mit Anhängen als Zip, sonst das Nachrichten-PDF."""
+        zip_btn = page.locator(f"{MODAL} #downloadNachrichtMitAnhangButton")
+        has_zip = await zip_btn.count() > 0
+        btn = zip_btn if has_zip else page.locator(f'{MODAL} [id^="NachrichtHerunterladen_"][id$="_PDF"]').first
         if not await btn.is_visible():
-            await page.locator("#nachrichtHerunterladenForm button").first.click()
-            await self.sleep(0.5)
+            await page.locator(f'{MODAL} #nachrichtHerunterladenForm [id^="showActions_"]').first.click()
+            await btn.wait_for(state="visible", timeout=5000)
         async with page.expect_download(timeout=60000) as dl_info:
             await btn.click()
         dl = await dl_info.value
@@ -267,8 +297,6 @@ class SyncFlow(ElsterPortal):
             data = Path(await dl.path()).read_bytes()
         finally:
             await dl.delete()
-        await page.keyboard.press("Escape")
-        await self.sleep(0.8)
         target_dir = self.cfg.runtime.download_dir.expanduser().resolve()
         if has_zip:
             return extract_inbox_zip(data, target_dir, msg)
@@ -280,21 +308,9 @@ class SyncFlow(ElsterPortal):
         return str(target), []
 
     async def _inbox_pdf(self, page: Page, msg: dict) -> str | None:
-        """Fallback: Nachrichtentext aus dem Dialog selbst als PDF rendern (ohne Anhänge)."""
+        """Fallback: Text des bereits geöffneten, geprüften Dialogs als PDF rendern (ohne Anhänge)."""
         target = safe_child(self.cfg.runtime.download_dir, f"{inbox_basename(msg)}.pdf")
-        if not re.fullmatch(r"viewNachricht\d+", msg["id"]):
-            return None
-        el = await page.query_selector(f"#{msg['id']}")
-        if not el:
-            return None
-        await el.scroll_into_view_if_needed()
-        await el.click()
-        body_html = ""
-        for _ in range(15):
-            await self.sleep(1)
-            body_html = await page.evaluate(JS_INBOX_MODAL_HTML)
-            if body_html:
-                break
+        body_html = await page.evaluate(JS_INBOX_MODAL_HTML)
         if not body_html:
             return None
 
@@ -319,8 +335,6 @@ class SyncFlow(ElsterPortal):
                              margin={"top": "20mm", "bottom": "20mm", "left": "20mm", "right": "20mm"})
         finally:
             await ctx.close()
-        await page.keyboard.press("Escape")
-        await self.sleep(0.8)
         if target.exists() and target.stat().st_size > 500:
             restrict_file(target)
             return str(target)
