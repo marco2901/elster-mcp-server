@@ -1,7 +1,12 @@
 # elster-mcp-server
 
-A **Model Context Protocol (MCP) server** that lets Claude (or any MCP-capable client)
-drive the German tax portal [ELSTER](https://www.elster.de) via Puppeteer.
+Ein **Model Context Protocol (MCP) Server** für das deutsche Steuerportal
+[ELSTER](https://www.elster.de). Claude oder ein anderer MCP-Client kann damit
+UStVA, Anlage EÜR und ESt vorbereiten sowie Posteingang und Übermittlungshistorie lesen.
+
+Seit v0.2 ist die **Python-Implementierung** (`elster_mcp/`, Playwright + offizielles
+`mcp`-SDK) die Hauptvariante. Die ursprüngliche TypeScript/Puppeteer-Version liegt
+unverändert in `src/` (siehe [Legacy TypeScript](#legacy-typescript-version)).
 
 ---
 
@@ -31,9 +36,157 @@ drive the German tax portal [ELSTER](https://www.elster.de) via Puppeteer.
 - The EÜR and ESt tools **never submit**. They only fill the form up to "Prüfen" and stop, so you review and submit yourself in the ELSTER portal.
 - All sync / history / inbox tools are read-only and never modify state on the ELSTER side.
 
+
 ---
 
-## Features
+## Sicherheitsmerkmale – wie sie geschützt werden
+
+Deine ELSTER-Sicherheitsmerkmale sind die **Zertifikatsdatei (`.pfx`)** und das
+**Zertifikats-Passwort**. Dazu kommen Steuernummer und Stammdaten. Der Server behandelt sie so:
+
+| Schutz | Umsetzung |
+|---|---|
+| Nie im Repository | `*.pfx`, `*.p12`, `config.json`, `secrets/`, `audit/`, Downloads und Screenshots sind gitignored. Das Passwort gehört nicht in `config.json`. |
+| Sichere Passwortquellen | Reihenfolge: `ELSTER_PASSWORD_FILE` (Docker-Secret/Datei mit `chmod 600`) → OS-Keyring (`python -m elster_mcp store-secret cert-password`) → `ELSTER_PASSWORD` → `config.json` (nur mit Warnung) |
+| Keine Klartext-Lecks | Passwort und Token werden als `SecretStr` gehalten. Passwort, Token und Steuernummer werden in **allen Logs** und im Audit-Log durch `***` ersetzt. `elster_config_show` maskiert sie. |
+| Dateirechte | Zertifikat und Secret-Dateien werden geprüft. Mit `ELSTER_STRICT_PERMISSIONS=1` ist eine gruppen- oder weltlesbare Datei ein harter Fehler. Screenshots, PDFs und das Audit-Log werden mit `0600` geschrieben, die Verzeichnisse mit `0700`. |
+| Zertifikatsprüfung | Nur `.pfx`/`.p12` mit plausibler Größe wird in den Browser geladen. |
+| Browser-Isolation | Jede Sitzung bekommt einen frischen Browser-Kontext ohne Cookies. **Alle Requests außer `https://*.elster.de` werden blockiert**, es gibt also keinen Datenabfluss an Tracker oder Dritte. Die Chromium-Sandbox ist standardmäßig aktiv. |
+| Übermittlungssperre | `ELSTER_ALLOW_SUBMIT` ist standardmäßig **aus**. Ohne diesen Schalter kann nichts ans Finanzamt gesendet werden. |
+| Freigabecode | Nach der ELSTER-Prüfung erzeugt der Server einen HMAC-Code, der an **genau diese Sitzung und genau diese Beträge** gebunden ist. `elster_ustva_confirm` verlangt diesen Code. |
+| Mensch im Loop | Unterstützt der Client *Elicitation*, fragt der Server **dich direkt** (nicht das Modell) und du musst den Code abtippen. `ELSTER_REQUIRE_ELICITATION=1` erzwingt das. |
+| Strikte Eingaben | Nur bekannte Kennziffern und EÜR-Felder, keine negative Vorsteuer, Plausibilitätsgrenzen für Beträge, Jahr und Zeitraum. Nicht gefundene Kennziffern führen zum **Abbruch** statt zu einer stillen Teilübermittlung. |
+| Audit-Log | Jede Übermittlungsstufe, Ablehnung, jeder Login-Test und jeder Abbruch landet als JSONL in `audit/elster-audit.jsonl`, ohne Geheimnisse. |
+| HTTP nur mit Token | Der HTTP-Transport startet nur mit einem Token (mind. 32 Zeichen, Vergleich in konstanter Zeit) und bindet standardmäßig an `127.0.0.1`. |
+| Ressourcen | Höchstens 2 parallele Browser. Nicht bestätigte UStVA-Sitzungen verfallen nach 15 min, ohne dass etwas übermittelt wird. |
+
+## Installation (Python ≥ 3.10)
+
+```bash
+git clone https://github.com/marco2901/elster-mcp-server.git
+cd elster-mcp-server
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[keyring]"
+playwright install chromium
+```
+
+## Sicherheitsmerkmale hinterlegen
+
+```bash
+# 1. Zertifikat außerhalb des Repos ablegen und schützen
+mkdir -p ~/.elster && chmod 700 ~/.elster
+cp /pfad/zu/deinem/Zertifikat.pfx ~/.elster/zertifikat.pfx
+chmod 600 ~/.elster/zertifikat.pfx
+
+# 2. Passwort in den OS-Keyring (macOS-Schlüsselbund / Windows Credential Manager / Secret Service)
+python -m elster_mcp store-secret cert-password
+
+# 3. Stammdaten
+cp config.example.json config.json   # pfxPath, taxNumber, stateCode, Name, Adresse eintragen
+
+# 4. Prüfen (ohne Login)
+python -m elster_mcp check
+```
+
+Alternativ ohne Keyring: das Passwort in eine Datei mit `chmod 600` schreiben und
+`ELSTER_PASSWORD_FILE=/pfad/zur/datei` setzen.
+
+## Mit Claude Desktop / Claude Code (stdio)
+
+```json
+{
+  "mcpServers": {
+    "elster": {
+      "command": "/absolute/path/to/elster-mcp-server/.venv/bin/elster-mcp",
+      "args": ["serve"],
+      "env": { "ELSTER_CONFIG_PATH": "/absolute/path/to/elster-mcp-server/config.json" }
+    }
+  }
+}
+```
+
+Claude Code: `claude mcp add elster -- /absolute/path/.venv/bin/elster-mcp serve`
+
+## Als Container (Portainer / Docker Compose, HTTP)
+
+Die Anleitung steht im Kopf von `docker-compose.yml`. Kurz gesagt: Zertifikat, Passwort und
+Token liegen als Docker-Secrets in `./secrets/`. Der Port wird nur auf `127.0.0.1`
+veröffentlicht, nach außen geht es ausschließlich über einen TLS-Reverse-Proxy.
+Der Container läuft read-only, ohne Capabilities und als Nicht-Root-Benutzer.
+Clients senden `Authorization: Bearer <token>` an `https://<host>/mcp`.
+
+## Tools
+
+| Tool | Zweck | Übermittelt? |
+|---|---|---|
+| `elster_security_check` | Zertifikat, Passwortquelle, Dateirechte, Freigabe-Status prüfen (lokal) | Nein |
+| `elster_config_show` | Geladene Konfiguration, maskiert | Nein |
+| `elster_login_test` | Login mit Zertifikat testen | Nein |
+| `elster_kennziffern_list` | Unterstützte UStVA-Kennziffern | Nein |
+| `elster_ustva_generate_xml` | UStVA validieren + XML-Snapshot fürs Archiv | Nein |
+| `elster_ustva_detect_reverse_charge` | §13b-Erkennung anhand der Lieferantenmuster | Nein |
+| `elster_ustva_start` | Login, Formular, Prüfung, dann **Pause** bei `AWAITING_CONFIRM` | Nein |
+| `elster_ustva_confirm` | „Absenden“, nur mit Sperre aus + Freigabecode (+ Elicitation) | **Ja** |
+| `elster_eur_start` | Anlage EÜR bis zur Prüfung füllen, als Entwurf speichern | Nein |
+| `elster_est_start` | ESt 1 A vorbereiten, 30 min zur Kontrolle offen | Nein |
+| `elster_session_status` / `_list` / `_cancel` | Sitzungsverwaltung | Nein |
+| `elster_sync_history` | „Übermittelte Formulare“ lesen | Nein |
+| `elster_sync_inbox` | Posteingang lesen, optional als PDF | Nein |
+
+### Ablauf UStVA
+
+```text
+1. elster_security_check                      → ok: true
+2. elster_ustva_start(year=2026, period="Q1",
+     report={"81": 12000, "86": 300, "66": 1845.30})   → sessionId
+3. elster_session_status(sessionId)           → AWAITING_CONFIRM, summary, screenshotPath, confirmationCode
+   → Mensch prüft Screenshot + Beträge
+4. elster_ustva_confirm(sessionId, confirmationCode)
+   → (Client fragt dich direkt) → Transferticket
+```
+
+## Wichtige Umgebungsvariablen
+
+| Variable | Bedeutung |
+|---|---|
+| `ELSTER_PFX_PATH` | Pfad zur Zertifikatsdatei |
+| `ELSTER_PASSWORD_FILE` / `ELSTER_PASSWORD` | Zertifikats-Passwort (Datei bevorzugt) |
+| `ELSTER_TAX_NUMBER`, `ELSTER_STATE_CODE` | Steuernummer, Bundesland-Code |
+| `ELSTER_ALLOW_SUBMIT` | `1` = Übermittlung freigeschaltet (Standard: aus) |
+| `ELSTER_REQUIRE_ELICITATION` | `1` = nur mit direkter Nutzerbestätigung |
+| `ELSTER_STRICT_PERMISSIONS` | `1` = unsichere Dateirechte sind ein Fehler |
+| `ELSTER_SCREENSHOTS` | `0` = keine Screenshots (enthalten Steuerdaten) |
+| `ELSTER_HEADLESS` | `false` = Browser sichtbar (zum Debuggen) |
+| `ELSTER_CHROMIUM_PATH` | eigenes Chrome/Chromium verwenden |
+| `ELSTER_MCP_TOKEN_FILE` / `ELSTER_MCP_TOKEN` | Bearer-Token für HTTP |
+| `ELSTER_MCP_HOST`, `ELSTER_MCP_PORT` | HTTP-Bindung (Standard `127.0.0.1:8765`) |
+
+## Entwicklung
+
+```bash
+pip install -e ".[dev]"
+pytest          # Tests für Secrets, Validierung, Freigabelogik, Token-Middleware
+ruff check elster_mcp tests
+```
+
+## Grenzen
+
+- Die Selektoren des ELSTER-Portals können sich ändern. Zum Debuggen mit
+  `ELSTER_HEADLESS=false` starten und die Screenshots in `./screenshots/` ansehen.
+- Lädt das Portal Ressourcen von Hosts außerhalb von `elster.de`, müssen diese unter
+  `security.allowedHosts` ergänzt werden. Blockierte Requests erscheinen mit
+  `ELSTER_LOG_LEVEL=DEBUG` im Log.
+- `elster_sync_history` liefert in der Python-Version nur die Liste, keine PDFs.
+- Offizielle programmatische Übermittlung geht nur über ERiC (Hersteller-Registrierung).
+
+---
+
+## Legacy TypeScript-Version
+
+Die ursprüngliche Implementierung (Node.js ≥ 18, Puppeteer) liegt in `src/` und wird mit
+`npm install && npm run build && node dist/index.js` gestartet. Ihre Dokumentation:
+
+### Features
 
 | Tool | What it does | Submits? |
 |------|--------------|----------|
@@ -50,14 +203,14 @@ drive the German tax portal [ELSTER](https://www.elster.de) via Puppeteer.
 | `elster_sync_inbox` | Reads ELSTER inbox (optionally with PDFs) | No |
 | `elster_session_status` / `_list` / `_cancel` | Session management | No |
 
-## Requirements
+### Requirements
 
 - **Node.js ≥ 18**
 - An **ELSTER certificate file** (`.pfx`) — get it from `https://www.elster.de` → "Mein ELSTER" → "Mein Benutzerkonto" → "Zertifikat verlängern"
 - The certificate password
 - Your **Steuernummer** and **Bundesland-Code**
 
-## Install
+### Install
 
 ```bash
 git clone https://github.com/YOUR_USERNAME/elster-mcp-server.git
@@ -68,7 +221,7 @@ npm run build
 
 Puppeteer will install a bundled Chromium on first install (~150 MB).
 
-## Configuration
+### Configuration
 
 ```bash
 cp config.example.json config.json
@@ -88,7 +241,7 @@ You can also point the loader at a different config file via
 The two-digit `stateCode` for your Finanzamt is published by ELSTER —
 look up the current value in the official ELSTER documentation.
 
-### Reverse-Charge supplier list
+#### Reverse-Charge supplier list
 
 Add your `§13b UStG` suppliers under `ustva.reverseChargeSuppliers` in
 `config.json`. Patterns are case-insensitive regexes matched against the
@@ -98,7 +251,7 @@ voucher's `contactName` or `description`. Example entry:
 { "pattern": "your-supplier\\s+ireland", "region": "EU", "name": "Your Supplier Ireland" }
 ```
 
-## Use with Claude Desktop
+### Use with Claude Desktop
 
 Add to `~/Library/Application Support/Claude/claude_desktop_config.json`
 (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
@@ -119,7 +272,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`
 
 See `examples/claude_desktop_config.json` for the template.
 
-## Use with any MCP client
+### Use with any MCP client
 
 Run the server in stdio mode:
 
@@ -129,7 +282,7 @@ node dist/index.js
 
 Then connect via your client's MCP transport.
 
-## Typical UStVA flow
+### Typical UStVA flow
 
 ```text
 1. elster_login_test                          → { ok: true }
@@ -144,7 +297,7 @@ Then connect via your client's MCP transport.
 5. elster_ustva_confirm({ sessionId })        → { success: true, ticket: "..." }
 ```
 
-## Typical EÜR flow
+### Typical EÜR flow
 
 ```text
 1. elster_login_test
@@ -161,14 +314,14 @@ Then connect via your client's MCP transport.
 4. open the ELSTER portal in your browser → "Meine Formulare" → review the draft → submit manually
 ```
 
-## Security notes
+### Security notes
 
 - **Never commit your `.env`, `config.json`, or `.pfx`.** They are gitignored by default.
 - The certificate password is read from env / config and passed to Puppeteer — make sure
   the host running this server is trusted.
 - Set `ELSTER_HEADLESS=false` once to watch the first run and confirm everything is wired correctly.
 
-## Limitations
+### Limitations
 
 - The ELSTER portal selectors can change. If a flow breaks, run with `ELSTER_HEADLESS=false`
   and check the screenshots written to `./screenshots/`.
@@ -179,11 +332,11 @@ Then connect via your client's MCP transport.
   (registration as a software vendor). This server uses the same Online-Formular path
   that any taxpayer uses.
 
-## License
+### License
 
 [MIT](LICENSE)
 
-## Contributing
+### Contributing
 
 PRs welcome. The most useful additions are:
 
@@ -193,3 +346,4 @@ PRs welcome. The most useful additions are:
 
 When opening an issue, please run with `ELSTER_HEADLESS=false` and attach the
 screenshot under `./screenshots/` that shows the failure.
+

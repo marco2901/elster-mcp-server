@@ -1,11 +1,10 @@
 {
-  "$comment": "ELSTER MCP Server - example config. Copy to config.json and fill in YOUR values. Any value can also be supplied via an environment variable (ELSTER_PFX_PATH, ELSTER_PASSWORD, ELSTER_TAX_NUMBER, ELSTER_STATE_CODE, ELSTER_NAME, ELSTER_FIRST_NAME, ELSTER_STREET, ELSTER_HOUSE_NUMBER, ELSTER_ZIP, ELSTER_CITY, ELSTER_COUNTRY, ELSTER_DOWNLOAD_DIR, ELSTER_SCREENSHOT_DIR, ELSTER_HEADLESS, ELSTER_EST_SKIP_EUR). Env vars take precedence over this file.",
-
+  "$comment": "ELSTER MCP Server - Beispielkonfiguration. Nach config.json kopieren (gitignored). Das Zertifikats-Passwort gehört NICHT hierher, sondern in ELSTER_PASSWORD_FILE (chmod 600), den OS-Keyring (python -m elster_mcp store-secret cert-password) oder notfalls ELSTER_PASSWORD. Umgebungsvariablen haben Vorrang.",
   "auth": {
     "pfxPath": "",
+    "$passwordComment": "Leer lassen – siehe $comment.",
     "password": ""
   },
-
   "taxpayer": {
     "$taxNumberComment": "Steuernummer in the format your Finanzamt issued it (with or without slashes).",
     "taxNumber": "",
@@ -19,25 +18,41 @@
     "city": "",
     "country": "DE"
   },
-
   "runtime": {
     "downloadDir": "./downloads",
     "screenshotDir": "./screenshots",
     "headless": true,
     "browserArgs": [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
       "--disable-gpu",
       "--window-size=1280,1024"
+    ],
+    "chromiumSandbox": true,
+    "executablePath": ""
+  },
+  "security": {
+    "$comment": "allowSubmit=false: elster_ustva_confirm verweigert jede Übermittlung. requireElicitation=true: Freigabe nur, wenn der MCP-Client den Menschen direkt fragen kann.",
+    "allowSubmit": false,
+    "requireElicitation": false,
+    "confirmTimeoutMinutes": 15,
+    "screenshots": true,
+    "strictPermissions": true,
+    "auditLog": "./audit/elster-audit.jsonl",
+    "allowedHosts": [
+      "elster.de",
+      "www.elster.de"
     ]
   },
-
+  "http": {
+    "$comment": "Nur für --transport http. Token über ELSTER_MCP_TOKEN_FILE setzen.",
+    "host": "127.0.0.1",
+    "port": 8765,
+    "path": "/mcp"
+  },
   "ustva": {
     "$comment": "Reverse-Charge supplier patterns (§13b UStG). region=EU -> KZ 46/47, region=NON_EU -> KZ 73/74. Vorsteuer always KZ 67. Patterns are case-insensitive JS regexes matched against contactName / description.",
     "reverseChargeSuppliers": []
   },
-
   "est": {
     "skipEurPreHook": false
   }

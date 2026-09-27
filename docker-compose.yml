@@ -1,0 +1,57 @@
+# Für Portainer/Docker Compose. Die Sicherheitsmerkmale kommen ausschließlich als
+# Docker-Secrets aus ./secrets/ (gitignored) – nie als Klartext-Umgebungsvariable.
+#
+#   mkdir -p secrets && chmod 700 secrets
+#   cp /pfad/zu/deinem/zertifikat.pfx secrets/elster_cert.pfx
+#   printf '%s' 'DEIN-ZERTIFIKATS-PASSWORT' > secrets/elster_password
+#   python -m elster_mcp gen-token > secrets/mcp_token
+#   chmod 600 secrets/* && sudo chown 1001:1001 secrets/*   # UID von pwuser im Image
+services:
+  elster-mcp:
+    build: .
+    image: elster-mcp:latest
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    shm_size: "1gb"
+    environment:
+      ELSTER_PFX_PATH: /run/secrets/elster_cert.pfx
+      ELSTER_PASSWORD_FILE: /run/secrets/elster_password
+      ELSTER_MCP_TOKEN_FILE: /run/secrets/mcp_token
+      ELSTER_TAX_NUMBER: ${ELSTER_TAX_NUMBER:?Steuernummer fehlt}
+      ELSTER_STATE_CODE: ${ELSTER_STATE_CODE:?Bundesland-Code fehlt}
+      ELSTER_NAME: ${ELSTER_NAME:-}
+      ELSTER_FIRST_NAME: ${ELSTER_FIRST_NAME:-}
+      ELSTER_STREET: ${ELSTER_STREET:-}
+      ELSTER_HOUSE_NUMBER: ${ELSTER_HOUSE_NUMBER:-}
+      ELSTER_ZIP: ${ELSTER_ZIP:-}
+      ELSTER_CITY: ${ELSTER_CITY:-}
+      # Übermittlung bleibt gesperrt, bis du sie bewusst freischaltest:
+      ELSTER_ALLOW_SUBMIT: ${ELSTER_ALLOW_SUBMIT:-0}
+      ELSTER_STRICT_PERMISSIONS: "1"
+      ELSTER_MCP_BEHIND_PROXY: "1"
+      HOME: /tmp
+    secrets:
+      - elster_cert.pfx
+      - elster_password
+      - mcp_token
+    volumes:
+      - elster-data:/data
+    # Nur lokal binden; nach außen ausschließlich über einen TLS-Reverse-Proxy.
+    ports:
+      - "127.0.0.1:8765:8765"
+
+secrets:
+  elster_cert.pfx:
+    file: ./secrets/elster_cert.pfx
+  elster_password:
+    file: ./secrets/elster_password
+  mcp_token:
+    file: ./secrets/mcp_token
+
+volumes:
+  elster-data:

@@ -1,0 +1,13 @@
+{
+  "$comment": "Python-Variante. Das Zertifikats-Passwort liegt NICHT hier, sondern im OS-Keyring (python -m elster_mcp store-secret cert-password) oder in einer Datei mit chmod 600 (ELSTER_PASSWORD_FILE).",
+  "mcpServers": {
+    "elster": {
+      "command": "/absolute/path/to/elster-mcp-server/.venv/bin/elster-mcp",
+      "args": ["serve"],
+      "env": {
+        "ELSTER_CONFIG_PATH": "/absolute/path/to/elster-mcp-server/config.json",
+        "ELSTER_PASSWORD_FILE": "/absolute/path/to/secrets/elster_password"
+      }
+    }
+  }
+}

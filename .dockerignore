@@ -1,0 +1,13 @@
+.git
+.venv
+node_modules
+dist
+secrets
+audit
+downloads
+screenshots
+config.json
+*.pfx
+*.p12
+tests
+src

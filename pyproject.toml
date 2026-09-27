@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "elster-mcp"
+version = "0.2.0"
+description = "MCP-Server für das ELSTER-Portal (UStVA, EÜR, ESt, Posteingang) – Python/Playwright mit abgesicherten Sicherheitsmerkmalen"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=2.0,<3",
+    "playwright>=1.45",
+    "pydantic>=2.6",
+    "uvicorn>=0.30",
+]
+
+[project.optional-dependencies]
+keyring = ["keyring>=25"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.5"]
+
+[project.scripts]
+elster-mcp = "elster_mcp.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["elster_mcp"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = ["src", "node_modules", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S"]
+ignore = ["S101", "S105", "S110", "E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

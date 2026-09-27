@@ -13,3 +13,18 @@ downloads/
 .idea/
 .vscode/
 *.tsbuildinfo
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+build/
+
+# Sicherheitsmerkmale & Steuerdaten – niemals committen
+secrets/
+audit/
+*.pem
+*.key
