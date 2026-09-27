@@ -107,13 +107,34 @@ Alternativ ohne Keyring: das Passwort in eine Datei mit `chmod 600` schreiben un
 
 Claude Code: `claude mcp add elster -- /absolute/path/.venv/bin/elster-mcp serve`
 
-## Als Container (Portainer / Docker Compose, HTTP)
+## Betrieb auf dem Docker-Host (Portainer, Traefik, Authelia)
 
-Die Anleitung steht im Kopf von `docker-compose.yml`. Kurz gesagt: Zertifikat, Passwort und
-Token liegen als Docker-Secrets in `./secrets/`. Der Port wird nur auf `127.0.0.1`
-veröffentlicht, nach außen geht es ausschließlich über einen TLS-Reverse-Proxy.
-Der Container läuft read-only, ohne Capabilities und als Nicht-Root-Benutzer.
-Clients senden `Authorization: Bearer <token>` an `https://<host>/mcp`.
+Der Aufbau entspricht den übrigen biegel24-MCP-Servern:
+
+- **Image:** `ghcr.io/marco2901/elster-mcp-server`, gebaut von `.github/workflows/docker.yml`
+  (Tests, dann Push; `latest` nur aus `main`).
+- **Stack:** `deploy/portainer-stack.yml`. Traefik übernimmt TLS (`*.biegel24.de`),
+  `middlewares-rate-limit` und `middlewares-secure-headers`. Der Container läuft read-only,
+  ohne Capabilities und als `pwuser` (UID 1001). Watchtower ist für diesen Container bewusst
+  deaktiviert.
+- **Anmeldung:** Claude.ai findet über `/.well-known/oauth-protected-resource/mcp` den
+  Authelia-Server, du meldest dich dort an (Client `elster-mcp`, **2FA-Pflicht**, siehe
+  `deploy/authelia-client.yml`). Der Server prüft jedes Token per Introspection.
+  `OIDC_ALLOWED_USERS` begrenzt den Zugang auf deinen Benutzer. Für CLI-Clients gilt
+  zusätzlich `Authorization: Bearer <mcp_api_key>`.
+- **Geheimnisse:** als Dateien unter `/docker-data/secrets/elster-mcp/`
+  (`elster_cert.pfx`, `elster_password`, `mcp_api_key`, `oidc_client_secret`;
+  Rechte 700/600, Eigentümer 1001). Sie werden nicht als Portainer-Variablen gesetzt.
+
+Zertifikat und Passwort ablegen (auf dem Docker-Host):
+
+```bash
+sudo install -o 1001 -g 1001 -m 600 /pfad/zu/Zertifikat.pfx /docker-data/secrets/elster-mcp/elster_cert.pfx
+sudo sh -c 'umask 077; read -rs -p "Zertifikats-Passwort: " P; printf %s "$P" > /docker-data/secrets/elster-mcp/elster_password'
+sudo chown 1001:1001 /docker-data/secrets/elster-mcp/elster_password
+```
+
+Lokal ohne Traefik genügt `docker-compose.yml` im Repo-Root mit Secrets aus `./secrets/`.
 
 ## Tools
 

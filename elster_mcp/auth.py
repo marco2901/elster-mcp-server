@@ -4,8 +4,8 @@
   Der Server findet Authelia über ``/.well-known/oauth-protected-resource`` (RFC 9728)
   und prüft jedes Token per Introspection (RFC 7662) bei ``OIDC_INTROSPECTION_URL``.
 * Für CLI/Skripte gilt zusätzlich ein statischer ``MCP_API_KEY`` als Bearer-Token.
-* ``OIDC_ALLOWED_USERS`` beschränkt den Zugriff auf bestimmte Authelia-Benutzer –
-  für ein Steuer-Werkzeug dringend empfohlen.
+* ``OIDC_ALLOWED_USERS`` legt fest, welche Authelia-Benutzer zugreifen dürfen. Ist die
+  Liste leer, wird **kein** OAuth-Token akzeptiert (nur ``MCP_API_KEY``); ``*`` erlaubt alle.
 """
 
 from __future__ import annotations
@@ -37,6 +37,7 @@ class ElsterTokenVerifier:
         client_secret: str | None = None,
         allowed_users: list[str] | None = None,
         required_scopes: list[str] | None = None,
+        audience: str | None = None,
         http: httpx.AsyncClient | None = None,
     ) -> None:
         if api_key is not None and len(api_key) < 32:
@@ -50,6 +51,10 @@ class ElsterTokenVerifier:
         self._client = (client_id, client_secret) if client_id and client_secret else None
         self._allowed_users = {u.strip().lower() for u in (allowed_users or []) if u.strip()}
         self._required_scopes = set(required_scopes or [])
+        #: Token muss für DIESEN Server ausgestellt sein (client_id oder aud) –
+        #: sonst würde z. B. ein Token des Outlook-MCP hier akzeptiert.
+        self._client_id = client_id
+        self._audience = audience.rstrip("/") if audience else None
         self._http = http
         self._cache: dict[str, tuple[float, AccessToken | None]] = {}
 
@@ -94,6 +99,13 @@ class ElsterTokenVerifier:
         if not data.get("active"):
             return None
 
+        aud = data.get("aud") or []
+        auds = {str(a).rstrip("/") for a in (aud if isinstance(aud, list) else [aud])}
+        issued_for_us = data.get("client_id") == self._client_id or (self._audience and self._audience in auds)
+        if not issued_for_us:
+            log.warning("Token wurde für einen anderen Client ausgestellt (%s) – abgelehnt.", data.get("client_id"))
+            return None
+
         exp = data.get("exp")
         if isinstance(exp, (int, float)) and exp < time.time():
             return None
@@ -102,7 +114,8 @@ class ElsterTokenVerifier:
             log.warning("Token ohne erforderliche Scopes abgelehnt.")
             return None
         user = str(data.get("username") or data.get("preferred_username") or data.get("sub") or "")
-        if self._allowed_users and user.lower() not in self._allowed_users:
+        # Sperrt im Zweifel: ohne OIDC_ALLOWED_USERS wird kein OAuth-Token akzeptiert ("*" = alle).
+        if "*" not in self._allowed_users and user.lower() not in self._allowed_users:
             log.warning("Benutzer '%s' ist nicht in OIDC_ALLOWED_USERS – abgelehnt.", user)
             return None
         return AccessToken(

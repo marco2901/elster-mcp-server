@@ -42,6 +42,7 @@ services:
       - OIDC_ISSUER_URL=https://authelia.biegel24.de
       - OIDC_INTROSPECTION_URL=https://authelia.biegel24.de/api/oidc/introspection
       - OIDC_CLIENT_ID=elster-mcp
+      # leer = OAuth gesperrt (nur MCP_API_KEY); dein Authelia-Benutzername eintragen
       - OIDC_ALLOWED_USERS=${OIDC_ALLOWED_USERS:-}
       # Steuerpflichtiger
       - ELSTER_TAX_NUMBER=${ELSTER_TAX_NUMBER:-}

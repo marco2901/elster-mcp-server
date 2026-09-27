@@ -1,0 +1,19 @@
+# In /docker-data/traefik/authelia/configuration.yml unter
+# identity_providers.oidc.clients einfügen, danach Authelia neu starten.
+# Der client_secret-Digest wird auf dem Host erzeugt
+# (/docker-data/secrets/elster-mcp-authelia-client.yml enthält die fertige Fassung).
+      - client_id: elster-mcp
+        client_name: ELSTER MCP Server
+        client_secret: '<PBKDF2-DIGEST>'
+        public: false
+        audience:
+          - 'https://elster-mcp.biegel24.de'
+        # Steuerzugang: zweiter Faktor Pflicht, Zustimmung höchstens 24 h gültig
+        authorization_policy: two_factor
+        consent_mode: pre-configured
+        pre_configured_consent_duration: '24 hours'
+        redirect_uris:
+          - https://claude.ai/api/mcp/auth_callback
+        scopes: [openid, profile, offline_access]
+        grant_types: [authorization_code, refresh_token]
+        response_types: [code]

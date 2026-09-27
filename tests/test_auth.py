@@ -16,7 +16,7 @@ INIT = {
 HEADERS = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
 
 
-def _introspection(active=True, username="marco", scope="openid"):
+def _introspection(active=True, username="marco", scope="openid", client_id="elster-mcp", aud=None):
     calls = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -25,12 +25,13 @@ def _introspection(active=True, username="marco", scope="openid"):
         if b"token=good" not in request.content:
             return httpx.Response(200, json={"active": False})
         return httpx.Response(200, json={"active": active, "username": username, "scope": scope,
-                                         "client_id": "claude", "exp": 4_000_000_000})
+                                         "client_id": client_id, "aud": aud or [], "exp": 4_000_000_000})
 
     return httpx.AsyncClient(transport=httpx.MockTransport(handler)), calls
 
 
 def _verifier(http, **kw):
+    kw.setdefault("allowed_users", ["marco"])
     return ElsterTokenVerifier(api_key=API_KEY, introspection_url="https://auth/introspect",
                                client_id="elster-mcp", client_secret="s", http=http, **kw)
 
@@ -43,6 +44,17 @@ def test_api_key_and_introspection():
     assert asyncio.run(v.verify_token("bad")) is None
     asyncio.run(v.verify_token("good"))  # aus dem Cache
     assert len(calls) == 2
+
+
+def test_token_of_other_client_rejected():
+    http, _ = _introspection(client_id="outlook-mcp", aud=["https://outlook-mcp.example.de"])
+    assert asyncio.run(_verifier(http).verify_token("good")) is None
+    http, _ = _introspection(username="nobody")
+    assert asyncio.run(_verifier(http, allowed_users=[]).verify_token("good")) is None  # sperrt im Zweifel
+    http, _ = _introspection(username="nobody")
+    assert asyncio.run(_verifier(http, allowed_users=["*"]).verify_token("good"))
+    http, _ = _introspection(client_id="claude-dyn", aud=["https://elster-mcp.example.de/"])
+    assert asyncio.run(_verifier(http, audience="https://elster-mcp.example.de").verify_token("good"))
 
 
 def test_allowed_users_and_scopes():

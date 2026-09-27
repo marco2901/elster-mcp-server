@@ -322,6 +322,7 @@ def http_app() -> Any:
             client_secret=h.oidc_client_secret.get_secret_value() if h.oidc_client_secret else None,
             allowed_users=h.oidc_allowed_users,
             required_scopes=h.oidc_required_scopes,
+            audience=h.public_url,
         )
         # Das SDK liest Auth-Einstellungen beim Bauen der App; die Tools hängen am Modul-Server.
         mcp.settings.auth = AuthSettings(
