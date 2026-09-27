@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from typing import Any
+from urllib.parse import urlparse
 
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.types import ToolAnnotations
@@ -285,17 +286,61 @@ async def elster_sync_inbox(downloadPdfs: bool = False, maxPages: int = 20) -> d
 
 
 def http_app() -> Any:
-    """Streamable-HTTP-App, abgesichert per Bearer-Token."""
+    """Streamable-HTTP-App.
+
+    * Mit ``OIDC_ISSUER_URL`` + ``MCP_DOMAIN``: OAuth-Resource-Server für Claude.ai
+      (Authelia-Introspection, zusätzlich ``MCP_API_KEY`` als Bearer).
+    * Nur ``MCP_API_KEY``: einfacher Bearer-Schutz.
+    * Nichts gesetzt: Start wird verweigert.
+    """
+    from mcp.server.auth.settings import AuthSettings
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    from .auth import ElsterTokenVerifier
     from .security import BearerAuthMiddleware
 
     cfg = get_config()
-    if not cfg.http.token:
-        raise SecretError(
-            "HTTP-Transport ohne Token ist nicht erlaubt. Setze ELSTER_MCP_TOKEN_FILE oder ELSTER_MCP_TOKEN "
-            "(mind. 32 Zeichen, z. B. `python -c 'import secrets; print(secrets.token_urlsafe(48))'`)."
+    h = cfg.http
+    api_key = h.token.get_secret_value() if h.token else None
+
+    # Schutz gegen DNS-Rebinding: nur die öffentliche Domain und localhost als Host-Header.
+    hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+    origins = ["http://127.0.0.1:*", "http://localhost:*"]
+    if h.public_url:
+        public_host = urlparse(h.public_url).netloc
+        hosts += [public_host, f"{public_host}:*"]
+        origins += [h.public_url.rstrip("/"), "https://claude.ai"]
+    security = TransportSecuritySettings(allowed_hosts=hosts, allowed_origins=origins)
+
+    if h.oidc_issuer_url:
+        if not h.public_url:
+            raise SecretError("OIDC benötigt MCP_DOMAIN (bzw. MCP_PUBLIC_URL) als öffentliche Adresse.")
+        verifier = ElsterTokenVerifier(
+            api_key=api_key,
+            introspection_url=h.oidc_introspection_url,
+            client_id=h.oidc_client_id,
+            client_secret=h.oidc_client_secret.get_secret_value() if h.oidc_client_secret else None,
+            allowed_users=h.oidc_allowed_users,
+            required_scopes=h.oidc_required_scopes,
         )
-    app = mcp.streamable_http_app(streamable_http_path=cfg.http.path, host=cfg.http.host)
-    return BearerAuthMiddleware(app, cfg.http.token.get_secret_value())
+        # Das SDK liest Auth-Einstellungen beim Bauen der App; die Tools hängen am Modul-Server.
+        mcp.settings.auth = AuthSettings(
+            issuer_url=h.oidc_issuer_url,
+            resource_server_url=h.public_url.rstrip("/") + h.path,
+            required_scopes=h.oidc_required_scopes or None,
+            validate_token_resource=False,
+        )
+        mcp._token_verifier = verifier
+        log.info("HTTP-Auth: OAuth via %s%s", h.oidc_issuer_url, " + MCP_API_KEY" if api_key else "")
+        return mcp.streamable_http_app(streamable_http_path=h.path, transport_security=security)
+
+    if not api_key:
+        raise SecretError(
+            "HTTP-Transport ohne Schutz ist nicht erlaubt. Setze OIDC_* (Authelia) und/oder "
+            "MCP_API_KEY_FILE / MCP_API_KEY (mind. 32 Zeichen, `python -m elster_mcp gen-token`)."
+        )
+    log.info("HTTP-Auth: nur MCP_API_KEY")
+    return BearerAuthMiddleware(mcp.streamable_http_app(streamable_http_path=h.path, transport_security=security), api_key)
 
 
 def run(transport: str = "stdio") -> None:

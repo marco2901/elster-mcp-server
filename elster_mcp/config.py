@@ -80,8 +80,18 @@ class HttpConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8765
     path: str = "/mcp"
+    #: Statischer Bearer-Token (MCP_API_KEY) für CLI/Skripte.
     token: SecretStr | None = None
     token_source: str = "unset"
+    #: Öffentliche Basis-URL, z. B. https://elster-mcp.biegel24.de (aus MCP_DOMAIN).
+    public_url: str | None = None
+    #: Authelia als OAuth-Server für Claude.ai.
+    oidc_issuer_url: str | None = None
+    oidc_introspection_url: str | None = None
+    oidc_client_id: str | None = None
+    oidc_client_secret: SecretStr | None = None
+    oidc_allowed_users: list[str] = Field(default_factory=list)
+    oidc_required_scopes: list[str] = Field(default_factory=list)
 
 
 class UstvaConfig(BaseModel):
@@ -118,6 +128,12 @@ class ElsterConfig(BaseModel):
             "path": self.http.path,
             "token": "<set>" if self.http.token else "<empty>",
             "token_source": self.http.token_source,
+            "public_url": self.http.public_url,
+            "oidc_issuer_url": self.http.oidc_issuer_url,
+            "oidc_introspection_url": self.http.oidc_introspection_url,
+            "oidc_client_id": self.http.oidc_client_id,
+            "oidc_client_secret": "<set>" if self.http.oidc_client_secret else "<empty>",
+            "oidc_allowed_users": self.http.oidc_allowed_users,
         }
         return data
 
@@ -132,6 +148,10 @@ def _env_bool(key: str, fallback: bool) -> bool:
     if v is None or v == "":
         return fallback
     return v.strip().lower() in {"1", "true", "yes", "ja", "on"}
+
+
+def _split(value: str | None) -> list[str]:
+    return [v.strip() for v in (value or "").replace(" ", ",").split(",") if v.strip()]
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -163,9 +183,13 @@ def load_config() -> ElsterConfig:
     password, password_source = resolve_secret(
         "ELSTER_PASSWORD", keyring_key="cert-password", fallback=fa.get("password"), strict=strict
     )
-    token, token_source = resolve_secret(
-        "ELSTER_MCP_TOKEN", keyring_key="http-token", fallback=fh.get("token"), strict=strict
-    )
+    token, token_source = resolve_secret("MCP_API_KEY", strict=strict)
+    if token is None:  # älterer Name
+        token, token_source = resolve_secret(
+            "ELSTER_MCP_TOKEN", keyring_key="http-token", fallback=fh.get("token"), strict=strict
+        )
+    oidc_secret, _ = resolve_secret("OIDC_CLIENT_SECRET", strict=strict)
+    domain = _env("MCP_DOMAIN", fh.get("domain", ""))
 
     cfg = ElsterConfig(
         config_path=str(config_path) if config_path.is_file() else None,
@@ -208,6 +232,13 @@ def load_config() -> ElsterConfig:
             path=_env("ELSTER_MCP_PATH", fh.get("path", "/mcp")),
             token=token,
             token_source=token_source,
+            public_url=_env("MCP_PUBLIC_URL", f"https://{domain}" if domain else None),
+            oidc_issuer_url=_env("OIDC_ISSUER_URL", fh.get("oidcIssuerUrl")) or None,
+            oidc_introspection_url=_env("OIDC_INTROSPECTION_URL", fh.get("oidcIntrospectionUrl")) or None,
+            oidc_client_id=_env("OIDC_CLIENT_ID", fh.get("oidcClientId")) or None,
+            oidc_client_secret=oidc_secret,
+            oidc_allowed_users=_split(_env("OIDC_ALLOWED_USERS", ",".join(fh.get("oidcAllowedUsers", [])))),
+            oidc_required_scopes=_split(_env("OIDC_REQUIRED_SCOPES", ",".join(fh.get("oidcRequiredScopes", [])))),
         ),
         ustva=UstvaConfig(
             reverse_charge_suppliers=[
@@ -223,6 +254,7 @@ def load_config() -> ElsterConfig:
     redactor.register(
         cfg.auth.password.get_secret_value() if cfg.auth.password else None,
         cfg.http.token.get_secret_value() if cfg.http.token else None,
+        cfg.http.oidc_client_secret.get_secret_value() if cfg.http.oidc_client_secret else None,
         cfg.taxpayer.tax_number,
     )
 

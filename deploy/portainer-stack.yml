@@ -1,0 +1,81 @@
+# Portainer-Stack „elster-mcp“ (Environment „Docker biegel24“)
+#
+# Gleiches Muster wie outlook-/hero-mcp: Traefik (TLS *.biegel24.de, Rate-Limit,
+# Secure-Headers) + Authelia-OIDC (Token-Introspection) + MCP_API_KEY für CLI.
+#
+# Geheimnisse liegen NICHT in Portainer-Umgebungsvariablen, sondern als Dateien auf dem Host:
+#   /docker-data/secrets/elster-mcp/elster_cert.pfx      ← ELSTER-Zertifikat (von dir)
+#   /docker-data/secrets/elster-mcp/elster_password      ← Zertifikats-Passwort (von dir)
+#   /docker-data/secrets/elster-mcp/mcp_api_key          ← zufällig, auf dem Host erzeugt
+#   /docker-data/secrets/elster-mcp/oidc_client_secret   ← zufällig, auf dem Host erzeugt
+# Rechte: Verzeichnis 700, Dateien 600, Eigentümer 1001:1001 (pwuser im Image).
+#
+# Stack-Variablen (nicht geheim): ELSTER_TAX_NUMBER, ELSTER_STATE_CODE, ELSTER_NAME,
+# ELSTER_FIRST_NAME, ELSTER_STREET, ELSTER_HOUSE_NUMBER, ELSTER_ZIP, ELSTER_CITY,
+# OIDC_ALLOWED_USERS, optional ELSTER_ALLOW_SUBMIT (Standard 0 = Übermittlung gesperrt).
+
+services:
+  elster-mcp:
+    image: ghcr.io/marco2901/elster-mcp-server:${IMAGE_TAG:-latest}
+    container_name: elster-mcp
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    shm_size: "1gb"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    environment:
+      - MCP_DOMAIN=${MCP_DOMAIN:-elster-mcp.biegel24.de}
+      - ELSTER_MCP_HOST=0.0.0.0
+      - ELSTER_MCP_PORT=8765
+      - ELSTER_MCP_BEHIND_PROXY=1
+      - HOME=/tmp
+      # Sicherheitsmerkmale (Dateien)
+      - ELSTER_PFX_PATH=/run/secrets/elster/elster_cert.pfx
+      - ELSTER_PASSWORD_FILE=/run/secrets/elster/elster_password
+      - MCP_API_KEY_FILE=/run/secrets/elster/mcp_api_key
+      - OIDC_CLIENT_SECRET_FILE=/run/secrets/elster/oidc_client_secret
+      - ELSTER_STRICT_PERMISSIONS=1
+      # Authelia
+      - OIDC_ISSUER_URL=https://authelia.biegel24.de
+      - OIDC_INTROSPECTION_URL=https://authelia.biegel24.de/api/oidc/introspection
+      - OIDC_CLIENT_ID=elster-mcp
+      - OIDC_ALLOWED_USERS=${OIDC_ALLOWED_USERS:-}
+      # Steuerpflichtiger
+      - ELSTER_TAX_NUMBER=${ELSTER_TAX_NUMBER:-}
+      - ELSTER_STATE_CODE=${ELSTER_STATE_CODE:-}
+      - ELSTER_NAME=${ELSTER_NAME:-}
+      - ELSTER_FIRST_NAME=${ELSTER_FIRST_NAME:-}
+      - ELSTER_STREET=${ELSTER_STREET:-}
+      - ELSTER_HOUSE_NUMBER=${ELSTER_HOUSE_NUMBER:-}
+      - ELSTER_ZIP=${ELSTER_ZIP:-}
+      - ELSTER_CITY=${ELSTER_CITY:-}
+      # Übermittlung ans Finanzamt – bleibt gesperrt, bis du bewusst 1 setzt
+      - ELSTER_ALLOW_SUBMIT=${ELSTER_ALLOW_SUBMIT:-0}
+      - ELSTER_REQUIRE_ELICITATION=${ELSTER_REQUIRE_ELICITATION:-0}
+    volumes:
+      - /docker-data/secrets/elster-mcp:/run/secrets/elster:ro
+      - elster-mcp-data:/data
+    expose:
+      - "8765"
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=traefik
+      - traefik.http.routers.elster-mcp.rule=Host(`${MCP_DOMAIN:-elster-mcp.biegel24.de}`)
+      - traefik.http.routers.elster-mcp.entrypoints=websecure
+      - traefik.http.routers.elster-mcp.tls=true
+      - traefik.http.routers.elster-mcp.tls.certresolver=mydnschallenge
+      - traefik.http.routers.elster-mcp.middlewares=middlewares-rate-limit@file,middlewares-secure-headers@file
+      - traefik.http.services.elster-mcp.loadbalancer.server.port=8765
+      - com.centurylinklabs.watchtower.enable=false
+    networks:
+      - traefik
+
+volumes:
+  elster-mcp-data:
+
+networks:
+  traefik:
+    external: true
