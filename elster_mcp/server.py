@@ -24,6 +24,7 @@ from .portal.ustva import UstvaFlow
 from .secrets import SecretError, insecure_permissions, validate_certificate
 from .security import AuditLog, codes_match
 from .sessions import sessions
+from .taxnumber import TaxNumberError, to_elster13
 from .xml import detect_reverse_charge, generate_ustva_xml
 
 log = logging.getLogger("elster_mcp.server")
@@ -78,6 +79,12 @@ def elster_security_check() -> dict[str, Any]:
     if cfg.auth.password_source == "config.json":
         checks["password"]["warning"] = "Passwort liegt im Klartext in config.json – besser ELSTER_PASSWORD_FILE oder Keyring."
     checks["taxNumber"] = {"ok": bool(cfg.taxpayer.tax_number), "stateCode": cfg.taxpayer.state_code or None}
+    if cfg.taxpayer.tax_number:
+        try:
+            elster13 = to_elster13(cfg.taxpayer.tax_number, cfg.taxpayer.state_code)
+            checks["taxNumber"]["elsterFormat"] = f"*********{elster13[-4:]}"  # maskiert, 13 Stellen
+        except TaxNumberError as exc:
+            checks["taxNumber"].update(ok=False, error=str(exc))
     checks["submission"] = {
         "allowSubmit": cfg.security.allow_submit,
         "requireElicitation": cfg.security.require_elicitation,
@@ -135,7 +142,11 @@ def elster_ustva_generate_xml(year: int, period: int | str, report: dict[str, fl
         u = UstvaReport(year=year, period=period, report=report)
     except ValidationError as exc:
         return _validation_error(exc)
-    return {"xml": generate_ustva_xml(get_config(), u), "normalizedReport": u.report}
+    try:
+        xml = generate_ustva_xml(get_config(), u)
+    except TaxNumberError as exc:
+        return {"error": str(exc)}
+    return {"xml": xml, "normalizedReport": u.report}
 
 
 @mcp.tool(annotations=LOCAL_ONLY)

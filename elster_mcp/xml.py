@@ -8,6 +8,7 @@ from xml.sax.saxutils import escape
 
 from .config import ElsterConfig
 from .models import UstvaReport
+from .taxnumber import to_elster13
 
 _OUTER_VERSION = "11"
 
@@ -17,9 +18,13 @@ def generate_ustva_xml(cfg: ElsterConfig, ustva: UstvaReport) -> str:
 
     Die tatsächliche Übermittlung läuft ausschließlich über das Online-Formular.
     Für eine XML-Übermittlung wäre die ERiC-Bibliothek nötig.
+
+    Raises:
+        TaxNumberError: wenn Steuernummer und Bundesland-Code nicht zusammenpassen.
     """
     schema_version = "2025" if ustva.year >= 2025 else "2023"
-    tax_number = re.sub(r"\D", "", cfg.taxpayer.tax_number)
+    # Im Datensatz steht die Steuernummer im bundeseinheitlichen 13-stelligen Format (wirft bei Fehlern).
+    tax_number = to_elster13(cfg.taxpayer.tax_number, cfg.taxpayer.state_code) if cfg.taxpayer.tax_number else ""
     today = date.today().strftime("%Y%m%d")
 
     lines = [

@@ -65,13 +65,21 @@ def test_est_rejects_injection_in_hint():
 # ----------------------------- XML ----------------------------- #
 
 def test_xml(monkeypatch):
-    monkeypatch.setenv("ELSTER_TAX_NUMBER", "012/345/67890")
+    monkeypatch.setenv("ELSTER_TAX_NUMBER", "013 815 08153")
+    monkeypatch.setenv("ELSTER_STATE_CODE", "26")
     xml = generate_ustva_xml(get_config(), UstvaReport(year=2025, period="Q2", report={"81": 1000, "66": 0, "86": 50.5}))
     assert "<Zeitraum>42</Zeitraum>" in xml
     assert "<Kz81>1000.00</Kz81>" in xml
     assert "<Kz86>50.50</Kz86>" in xml
     assert "Kz66" not in xml
-    assert "<Steuernummer>01234567890</Steuernummer>" in xml
+    assert "<Steuernummer>2613081508153</Steuernummer>" in xml
+
+
+def test_xml_rejects_unconvertible_tax_number(monkeypatch):
+    monkeypatch.setenv("ELSTER_TAX_NUMBER", "013 815 08153")
+    monkeypatch.setenv("ELSTER_STATE_CODE", "")
+    with pytest.raises(ValueError):
+        generate_ustva_xml(get_config(), UstvaReport(year=2025, period="Q2", report={"81": 1000}))
 
 
 def test_reverse_charge(write_config):
