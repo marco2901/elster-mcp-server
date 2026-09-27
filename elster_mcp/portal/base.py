@@ -349,7 +349,11 @@ class ElsterPortal:
         if not submit:
             submit = page.get_by_role("button", name="Login").first
         await submit.click()
-        await self.wait_nav(page, 30000)
+        # Auf die Weiterleitung nach "Mein ELSTER" warten – networkidle allein ist zu früh.
+        try:
+            await page.wait_for_url(lambda u: self._is_logged_in(u), timeout=30000)
+        except Exception:
+            await self.wait_nav(page, 10000)
 
         # Passwortfeld sofort leeren, falls die Seite stehen bleibt.
         try:
