@@ -77,6 +77,25 @@ class ElsterTokenVerifier:
         self._cache[key] = (now + _CACHE_TTL_S, result)
         return result
 
+    async def _userinfo_username(self, token: str) -> str:
+        if not self._introspection_url:
+            return ""
+        url = self._introspection_url.replace("/introspection", "/userinfo")
+        client = self._http or httpx.AsyncClient(timeout=10)
+        try:
+            resp = await client.get(url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
+        except httpx.HTTPError as exc:
+            log.error("Userinfo nicht erreichbar: %s", exc)
+            return ""
+        finally:
+            if self._http is None:
+                await client.aclose()
+        if resp.status_code != 200:
+            log.warning("Userinfo antwortet mit HTTP %s", resp.status_code)
+            return ""
+        info = resp.json()
+        return str(info.get("preferred_username") or info.get("username") or "")
+
     async def _introspect(self, token: str) -> AccessToken | None:
         client = self._http or httpx.AsyncClient(timeout=10)
         try:
@@ -113,7 +132,12 @@ class ElsterTokenVerifier:
         if self._required_scopes and not self._required_scopes.issubset(scopes):
             log.warning("Token ohne erforderliche Scopes abgelehnt.")
             return None
-        user = str(data.get("username") or data.get("preferred_username") or data.get("sub") or "")
+        user = str(data.get("username") or data.get("preferred_username") or "")
+        if not user and "*" not in self._allowed_users:
+            # Authelia liefert in der Introspection u. U. nur eine opake ``sub`` –
+            # dann den Benutzernamen über den Userinfo-Endpunkt mit dem Token selbst holen.
+            user = await self._userinfo_username(token)
+        user = user or str(data.get("sub") or "")
         # Sperrt im Zweifel: ohne OIDC_ALLOWED_USERS wird kein OAuth-Token akzeptiert ("*" = alle).
         if "*" not in self._allowed_users and user.lower() not in self._allowed_users:
             log.warning("Benutzer '%s' ist nicht in OIDC_ALLOWED_USERS – abgelehnt.", user)

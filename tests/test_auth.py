@@ -114,3 +114,18 @@ def test_http_app_oidc(monkeypatch):
     finally:
         server.mcp.settings.auth = None
         server.mcp._token_verifier = None
+
+
+def test_username_via_userinfo_when_introspection_has_only_sub():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/userinfo"):
+            assert request.headers["authorization"] == "Bearer good"
+            return httpx.Response(200, json={"preferred_username": "marco", "sub": "uuid-1"})
+        return httpx.Response(200, json={"active": True, "sub": "uuid-1", "client_id": "elster-mcp",
+                                         "scope": "openid profile", "exp": 4_000_000_000})
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    v = ElsterTokenVerifier(api_key=API_KEY, introspection_url="https://auth/api/oidc/introspection",
+                            client_id="elster-mcp", client_secret="s", http=http, allowed_users=["marco"])
+    tok = asyncio.run(v.verify_token("good"))
+    assert tok and tok.subject == "marco"

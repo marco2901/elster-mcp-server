@@ -8,12 +8,13 @@
         public: false
         audience:
           - 'https://elster-mcp.biegel24.de'
+          - 'https://elster-mcp.biegel24.de/mcp'
         # Steuerzugang: zweiter Faktor Pflicht, Zustimmung höchstens 24 h gültig
         authorization_policy: two_factor
         consent_mode: pre-configured
         pre_configured_consent_duration: '24 hours'
         redirect_uris:
           - https://claude.ai/api/mcp/auth_callback
-        scopes: [openid, profile, offline_access]
+        scopes: [openid, profile, email, offline_access, groups]
         grant_types: [authorization_code, refresh_token]
         response_types: [code]
