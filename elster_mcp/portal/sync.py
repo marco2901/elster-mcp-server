@@ -251,8 +251,12 @@ class SyncFlow(ElsterPortal):
             raise ValueError("Nachricht nicht in der Liste gefunden.")
         await el.scroll_into_view_if_needed()
         await el.click()
-        btn = page.locator("#downloadNachrichtMitAnhangButton")
-        await btn.wait_for(state="attached", timeout=20000)
+        zip_sel = "#downloadNachrichtMitAnhangButton"
+        pdf_sel = '#nachrichtHerunterladenForm [id^="NachrichtHerunterladen_"][id$="_PDF"]'
+        await page.wait_for_selector(f"{zip_sel}, {pdf_sel}", state="attached", timeout=20000)
+        # Mit Anhängen gibt es den Zip-Export, sonst nur das Nachrichten-PDF.
+        has_zip = await page.locator(zip_sel).count() > 0
+        btn = page.locator(zip_sel if has_zip else pdf_sel).first
         if not await btn.is_visible():
             await page.locator("#nachrichtHerunterladenForm button").first.click()
             await self.sleep(0.5)
@@ -265,7 +269,15 @@ class SyncFlow(ElsterPortal):
             await dl.delete()
         await page.keyboard.press("Escape")
         await self.sleep(0.8)
-        return extract_inbox_zip(data, self.cfg.runtime.download_dir.expanduser().resolve(), msg)
+        target_dir = self.cfg.runtime.download_dir.expanduser().resolve()
+        if has_zip:
+            return extract_inbox_zip(data, target_dir, msg)
+        if not data.startswith(b"%PDF"):
+            raise ValueError("ELSTER hat kein PDF geliefert.")
+        target = safe_child(target_dir, f"{inbox_basename(msg)}.pdf")
+        target.write_bytes(data)
+        restrict_file(target)
+        return str(target), []
 
     async def _inbox_pdf(self, page: Page, msg: dict) -> str | None:
         """Fallback: Nachrichtentext aus dem Dialog selbst als PDF rendern (ohne Anhänge)."""
