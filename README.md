@@ -153,6 +153,9 @@ Lokal ohne Traefik genügt `docker-compose.yml` im Repo-Root mit Secrets aus `./
 | `elster_session_status` / `_list` / `_cancel` | Sitzungsverwaltung | Nein |
 | `elster_sync_history` | „Übermittelte Formulare“ lesen | Nein |
 | `elster_sync_inbox` | Posteingang lesen (Betreff, Lesestatus), optional Nachrichten-PDF + alle Anhänge | Nein |
+| `elster_downloads_list` | Heruntergeladene Dateien auf dem Server auflisten | Nein |
+| `elster_file_link` | Einmal-Link (10 min) auf eine Datei, z. B. als `sourceUrl` für einen OneDrive-Upload | Nein |
+| `elster_downloads_delete` | Server-Kopien löschen (nicht das ELSTER-Postfach) | Nein |
 
 ### Ablauf UStVA
 
@@ -222,6 +225,9 @@ Die ursprüngliche Implementierung (Node.js ≥ 18, Puppeteer) liegt in `src/` u
 | `elster_est_start` | Opens ESt 1 A, fills basics, runs Prüfung, keeps browser open 30 min | No |
 | `elster_sync_history` | Reads "Übermittelte Formulare" (optionally with PDFs) | No |
 | `elster_sync_inbox` | Reads ELSTER inbox (subject, read status), optionally message PDF + all attachments | No |
+| `elster_downloads_list` | Lists downloaded files on the server | No |
+| `elster_file_link` | Single-use link (10 min) to a file, e.g. as `sourceUrl` for a OneDrive upload | No |
+| `elster_downloads_delete` | Deletes server-side copies (not the ELSTER inbox) | No |
 | `elster_session_status` / `_list` / `_cancel` | Session management | No |
 
 ### Requirements

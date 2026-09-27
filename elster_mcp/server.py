@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, ValidationError
 from . import __version__
 from .config import get_config
 from .constants import EUR_FIELDS, KENNZIFFERN
+from .filelinks import DEFAULT_TTL_SECONDS, file_links, resolve_download
 from .models import EstData, EurData, UstvaReport
 from .portal.base import ElsterPortal
 from .portal.est import EstFlow
@@ -298,6 +299,78 @@ async def elster_sync_inbox(downloadPdfs: bool = False, maxPages: int = 20) -> d
     return {"count": len(items), "items": items}
 
 
+# --------------------------------------------------------------------------- #
+# Heruntergeladene Dateien (Posteingang) weitergeben
+# --------------------------------------------------------------------------- #
+
+FILES_ROUTE = "/files/"
+
+
+@mcp.tool(annotations=LOCAL_ONLY)
+def elster_downloads_list() -> dict[str, Any]:
+    """Listet die heruntergeladenen Dateien (Nachrichten-PDFs und Anhänge) auf dem Server."""
+    base = get_config().runtime.download_dir.expanduser().resolve()
+    files = sorted((p for p in base.glob("*") if p.is_file() and not p.name.startswith(".")), key=lambda p: p.name)
+    return {"count": len(files), "files": [{"name": p.name, "size": p.stat().st_size} for p in files]}
+
+
+@mcp.tool(annotations=ToolAnnotations(read_only_hint=True, destructive_hint=False, open_world_hint=False))
+def elster_file_link(name: str) -> dict[str, Any]:
+    """Erzeugt einen Einmal-Download-Link (10 Minuten) für eine Datei aus elster_downloads_list.
+
+    Zum Ablegen in OneDrive den Link als ``sourceUrl`` an ``onedrive-upload`` übergeben; der OneDrive-Server
+    holt die Datei dann selbst ab. Der Link funktioniert genau einmal – für einen zweiten Versuch neu erzeugen.
+    """
+    cfg = get_config()
+    if not cfg.http.public_url:
+        return {"error": "Kein öffentlicher Server-Name (MCP_DOMAIN/MCP_PUBLIC_URL) konfiguriert."}
+    try:
+        path = resolve_download(cfg.runtime.download_dir, name)
+    except (ValueError, FileNotFoundError) as exc:
+        return {"error": str(exc)}
+    token = file_links.create(path)
+    _audit().write("file_link", file=path.name)
+    return {
+        "name": path.name,
+        "size": path.stat().st_size,
+        "url": cfg.http.public_url.rstrip("/") + FILES_ROUTE + token,
+        "expiresInSeconds": DEFAULT_TTL_SECONDS,
+        "singleUse": True,
+    }
+
+
+@mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True, open_world_hint=False))
+def elster_downloads_delete(names: list[str]) -> dict[str, Any]:
+    """Löscht Dateien aus dem Download-Ordner des Servers, z. B. nachdem sie in OneDrive abgelegt wurden.
+
+    Betrifft nur die lokalen Kopien auf dem Server, nicht das ELSTER-Postfach.
+    """
+    base = get_config().runtime.download_dir
+    deleted, errors = [], {}
+    for name in names:
+        try:
+            resolve_download(base, name).unlink()
+            deleted.append(name)
+        except (ValueError, OSError) as exc:
+            errors[name] = str(exc)
+    _audit().write("downloads_delete", files=deleted)
+    return {"deleted": deleted, "errors": errors}
+
+
+@mcp.custom_route(FILES_ROUTE + "{token}", methods=["GET"])
+async def download_file(request: Any) -> Any:
+    """Öffentliche Route für Einmal-Links; ohne gültiges Token nur 404."""
+    from starlette.responses import FileResponse, Response
+
+    path = file_links.consume(request.path_params.get("token", ""))
+    if not path or not path.is_file():
+        return Response("not found", status_code=404, headers={"Cache-Control": "no-store"})
+    _audit().write("file_fetched", file=path.name)
+    media = "application/pdf" if path.suffix.lower() == ".pdf" else "application/octet-stream"
+    return FileResponse(path, media_type=media, filename=path.name,
+                        headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})
+
+
 def http_app() -> Any:
     """Streamable-HTTP-App.
 
@@ -354,7 +427,10 @@ def http_app() -> Any:
             "MCP_API_KEY_FILE / MCP_API_KEY (mind. 32 Zeichen, `python -m elster_mcp gen-token`)."
         )
     log.info("HTTP-Auth: nur MCP_API_KEY")
-    return BearerAuthMiddleware(mcp.streamable_http_app(streamable_http_path=h.path, transport_security=security), api_key)
+    return BearerAuthMiddleware(
+        mcp.streamable_http_app(streamable_http_path=h.path, transport_security=security), api_key,
+        public_prefixes=(FILES_ROUTE,),
+    )
 
 
 def run(transport: str = "stdio") -> None:

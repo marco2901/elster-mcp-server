@@ -110,14 +110,16 @@ def host_allowed(url: str, allowed_hosts: list[str]) -> bool:
 class BearerAuthMiddleware:
     """Reine ASGI-Middleware: jeder HTTP-Request braucht ``Authorization: Bearer <token>``."""
 
-    def __init__(self, app: Any, token: str) -> None:
+    def __init__(self, app: Any, token: str, public_prefixes: tuple[str, ...] = ()) -> None:
         if len(token) < 32:
             raise ValueError("ELSTER_MCP_TOKEN muss mindestens 32 Zeichen lang sein.")
         self.app = app
         self._token = token.encode()
+        # Pfade mit eigener Absicherung (z. B. Einmal-Download-Links) ohne Bearer durchlassen.
+        self._public_prefixes = public_prefixes
 
     async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
-        if scope["type"] != "http":
+        if scope["type"] != "http" or any(scope.get("path", "").startswith(p) for p in self._public_prefixes):
             await self.app(scope, receive, send)
             return
         headers = dict(scope.get("headers") or [])
