@@ -152,7 +152,7 @@ Lokal ohne Traefik genügt `docker-compose.yml` im Repo-Root mit Secrets aus `./
 | `elster_est_start` | ESt 1 A vorbereiten, 30 min zur Kontrolle offen | Nein |
 | `elster_session_status` / `_list` / `_cancel` | Sitzungsverwaltung | Nein |
 | `elster_sync_history` | „Übermittelte Formulare“ lesen | Nein |
-| `elster_sync_inbox` | Posteingang lesen, optional als PDF | Nein |
+| `elster_sync_inbox` | Posteingang lesen (Betreff, Lesestatus), optional Nachrichten-PDF + alle Anhänge | Nein |
 
 ### Ablauf UStVA
 
@@ -221,7 +221,7 @@ Die ursprüngliche Implementierung (Node.js ≥ 18, Puppeteer) liegt in `src/` u
 | `elster_eur_start` | Fills Anlage EÜR up to Prüfung, then "Speichern und Verlassen" | No |
 | `elster_est_start` | Opens ESt 1 A, fills basics, runs Prüfung, keeps browser open 30 min | No |
 | `elster_sync_history` | Reads "Übermittelte Formulare" (optionally with PDFs) | No |
-| `elster_sync_inbox` | Reads ELSTER inbox (optionally with PDFs) | No |
+| `elster_sync_inbox` | Reads ELSTER inbox (subject, read status), optionally message PDF + all attachments | No |
 | `elster_session_status` / `_list` / `_cancel` | Session management | No |
 
 ### Requirements

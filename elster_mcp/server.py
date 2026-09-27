@@ -287,7 +287,13 @@ async def elster_sync_history(years: list[int] | None = None) -> dict[str, Any]:
 
 @mcp.tool(annotations=READ_ONLY)
 async def elster_sync_inbox(downloadPdfs: bool = False, maxPages: int = 20) -> dict[str, Any]:
-    """Liest den ELSTER-Posteingang (Bescheide, Nachrichten); optional je Nachricht ein PDF (nur lesend)."""
+    """Liest den ELSTER-Posteingang (Bescheide, Nachrichten), nur lesend.
+
+    Je Nachricht: subject, read (gelesen/ungelesen), hasAttachment, date. Mit downloadPdfs=true werden das
+    offizielle Nachrichten-PDF (pdfPath) und alle Anhänge (attachments) über ELSTERs Zip-Export gespeichert,
+    Dateinamen nach dem Schema JJJJ-MM-TT_ELSTER_<ID>_<Kurzbetreff>.pdf. Hinweis: Das Öffnen markiert
+    ungelesene Nachrichten in ELSTER als gelesen.
+    """
     items = await SyncFlow(get_config()).inbox(download_pdfs=downloadPdfs, max_pages=maxPages)
     return {"count": len(items), "items": items}
 
