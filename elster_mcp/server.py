@@ -97,8 +97,15 @@ async def elster_login_test() -> dict[str, Any]:
         async with sessions.browser_slots, portal.open() as page:
             await portal.login(page)
             url = page.url
-        _audit().write("login_test", ok=True)
-        return {"ok": True, "finalUrl": url}
+        result: dict[str, Any] = {"ok": True, "finalUrl": url}
+        if portal.pending_tasks is not None:
+            result["pendingTasks"] = portal.pending_tasks
+            result["hint"] = (
+                "Login erfolgreich, aber ELSTER zeigt offene Aufgaben (temporaereaufgaben). "
+                "Bitte einmal im ELSTER-Portal anmelden und erledigen – der Server klickt dort nichts."
+            )
+        _audit().write("login_test", ok=True, pending_tasks=portal.pending_tasks is not None)
+        return result
     except Exception as exc:
         _audit().write("login_test", ok=False, error=str(exc))
         return {"ok": False, "error": str(exc)}

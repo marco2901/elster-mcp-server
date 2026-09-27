@@ -18,6 +18,14 @@ from ..security import host_allowed, restrict_file, safe_child
 log = logging.getLogger("elster_mcp.portal")
 
 LOGGED_IN_MARKERS = ("mein-elster/startseite", "eportal/mein-elster", "meinelster")
+# Zwischenseiten nach erfolgreichem Login (z. B. E-Mail-Adresse bestätigen). Die Sitzung ist
+# authentifiziert; die Aufgabe selbst muss der Nutzer im Portal erledigen – wir klicken dort nichts.
+PENDING_TASK_MARKERS = ("eportal/temporaereaufgaben",)
+
+JS_PENDING_TASK_TITLES = """
+() => Array.from(document.querySelectorAll('main h1, main h2, main h3, h1, h2'))
+  .map(e => (e.textContent || '').trim()).filter(Boolean).slice(0, 5)
+"""
 
 # --------------------------------------------------------------------------- #
 # JavaScript-Helfer (1:1 aus der TypeScript-Version übernommen)
@@ -136,6 +144,8 @@ class ElsterPortal:
         self.browser: Browser | None = None
         self.context: BrowserContext | None = None
         self.page: Page | None = None
+        # Titel offener Portal-Aufgaben, falls ELSTER nach dem Login eine Zwischenseite zeigt.
+        self.pending_tasks: list[str] | None = None
 
     # ------------------------------------------------------------------ #
     # Lebenszyklus
@@ -303,8 +313,25 @@ class ElsterPortal:
     # Login mit Zertifikatsdatei + Passwort
     # ------------------------------------------------------------------ #
 
+    @staticmethod
+    def _is_pending_tasks(url: str) -> bool:
+        return any(m in url for m in PENDING_TASK_MARKERS)
+
     def _is_logged_in(self, url: str) -> bool:
-        return any(m in url for m in LOGGED_IN_MARKERS)
+        return any(m in url for m in LOGGED_IN_MARKERS) or self._is_pending_tasks(url)
+
+    async def _note_pending_tasks(self, page: Page) -> None:
+        if not self._is_pending_tasks(page.url):
+            return
+        try:
+            titles = await page.evaluate(JS_PENDING_TASK_TITLES)
+        except Exception:
+            titles = []
+        self.pending_tasks = [t[:120] for t in titles or []]
+        log.warning(
+            "Login erfolgreich, aber ELSTER zeigt offene Aufgaben (%s). Bitte im Portal erledigen.",
+            "; ".join(self.pending_tasks) or "ohne Titel",
+        )
 
     async def login(self, page: Page) -> None:
         auth = self.cfg.auth
@@ -318,6 +345,7 @@ class ElsterPortal:
         log.info("Öffne ELSTER-Startseite …")
         await page.goto(PORTAL_URLS["start"], wait_until="networkidle", timeout=60000)
         if self._is_logged_in(page.url):
+            await self._note_pending_tasks(page)
             return
 
         login_link = await page.query_selector('a[href*="login"], button.btn-login')
@@ -363,6 +391,7 @@ class ElsterPortal:
 
         if self._is_logged_in(page.url):
             log.info("Login erfolgreich.")
+            await self._note_pending_tasks(page)
             return
 
         err = await page.evaluate(
