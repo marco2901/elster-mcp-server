@@ -204,6 +204,12 @@ class BelegeFlow(DraftMixin, ElsterPortal):
                 return
             await page.locator("#NextPage").first.click()
             await self._settle(page)
+            # „Angaben noch nicht vollständig" betrifft beim Durchblättern Pflichtfelder späterer Seiten –
+            # weiterblättern, die ELSTER-Prüfung am Ende meldet, was wirklich fehlt.
+            later = page.locator("#correctlater")
+            if await later.count() and await later.first.is_visible():
+                await later.first.click()
+                await self._settle(page)
         if self.page_name(page.url) != target:
             raise PortalError(f"Seite {target} nicht erreicht (aktuell {self.page_name(page.url)}).")
 
