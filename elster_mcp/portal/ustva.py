@@ -29,7 +29,12 @@ _KZ_FIELD_RE = re.compile(r"Kz(\d+)[)\]]$")
 
 
 def kz_of_field(field_id: str, name: str = "") -> str | None:
-    """Kennziffer aus der Feld-ID bzw. dem Feldnamen, nur bei exaktem Ende (``Kz46)``/``Kz46]``)."""
+    """Kennziffer aus der Feld-ID bzw. dem Feldnamen, nur bei exaktem Ende (``Kz46)``/``Kz46]``).
+
+    ``EOL_SteuerZuKz81`` & Co. sind von ELSTER berechnete Steuerfelder – nie befüllen.
+    """
+    if "EOL_" in field_id or "EOL_" in name:
+        return None
     for candidate in (field_id, name):
         m = _KZ_FIELD_RE.search(candidate or "")
         if m:

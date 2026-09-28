@@ -17,6 +17,7 @@ P = "Startseite(0)_LeistungsempfaengerAlsSteuerschuldner(0)_fields(eruAnmeldungs
         (P + "Kz46Steuer)", "", None),     # anderes Feld, das nur mit Kz46 beginnt
         (P + "Kz4)", "", "4"),
         ("searchFieldInput_header", "suchstring", None),
+        (P + "EOL_SteuerZuKz81)", "", None),   # von ELSTER berechnete Steuer zu Kz 81
     ],
 )
 def test_kz_of_field(field_id, name, kz):
