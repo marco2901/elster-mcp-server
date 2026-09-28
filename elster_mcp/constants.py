@@ -10,27 +10,42 @@ class Kennziffer(TypedDict):
     description: str
 
 
-#: UStVA-Kennziffern (Stand 2025). NET = Bemessungsgrundlage, TAX = Steuerbetrag.
+#: UStVA-Kennziffern, Bezeichnungen nach dem ELSTER-Formular UStVA 2026 (Zeilennummern in Klammern).
+#: NET = Bemessungsgrundlage (volle Euro), TAX = Steuerbetrag (Euro, Cent).
 KENNZIFFERN: dict[str, Kennziffer] = {
-    "81": {"type": "NET", "description": "Steuerpflichtige Umsätze 19%"},
-    "86": {"type": "NET", "description": "Steuerpflichtige Umsätze 7%"},
-    "83": {"type": "NET", "description": "Steuerfreie Umsätze ohne Vorsteuerabzug"},
-    "41": {"type": "NET", "description": "Innergemeinschaftliche Lieferungen"},
-    "45": {"type": "NET", "description": "Übrige nicht steuerbare Umsätze"},
-    "89": {"type": "NET", "description": "Steuerpflichtige EG-Lieferungen"},
-    "60": {"type": "TAX", "description": "Übrige Vorsteuer"},
-    "61": {"type": "TAX", "description": "Vorsteuer aus innergemeinschaftlichem Erwerb"},
-    "66": {"type": "TAX", "description": "Vorsteuer aus Rechnungen (§15 UStG)"},
-    "67": {"type": "TAX", "description": "Vorsteuer aus Reverse-Charge §13b UStG"},
-    # Reverse-Charge §13b UStG
-    "46": {"type": "NET", "description": "Sonstige Leistung EU-Unternehmer §13b Abs.1 (BMG 19%)"},
-    "47": {"type": "TAX", "description": "USt auf KZ 46 (selbstberechnet)"},
-    "73": {"type": "NET", "description": "Leistungen §13b Abs.2 Nr.1-5 (Drittland; BMG 19%)"},
-    "74": {"type": "TAX", "description": "USt auf KZ 73 (selbstberechnet)"},
+    # Lieferungen und sonstige Leistungen
+    "81": {"type": "NET", "description": "Steuerpflichtige Umsätze zum Steuersatz von 19 % (Z. 13, BMG)"},
+    "86": {"type": "NET", "description": "Steuerpflichtige Umsätze zum Steuersatz von 7 % (Z. 14, BMG)"},
+    "41": {"type": "NET", "description": "Innergemeinschaftliche Lieferungen (§ 4 Nr. 1 Buchst. b UStG) an Abnehmer mit USt-IdNr. (Z. 19)"},
+    "48": {"type": "NET", "description": "Steuerfreie Umsätze ohne Vorsteuerabzug, z. B. § 4 Nr. 8 bis 29 oder § 19 Abs. 1 UStG (Z. 23)"},
+    # Innergemeinschaftliche Erwerbe
+    "89": {"type": "NET", "description": "Innergemeinschaftliche Erwerbe zum Steuersatz von 19 % (Z. 25, BMG)"},
+    # Leistungsempfänger als Steuerschuldner (§ 13b UStG)
+    "46": {"type": "NET", "description": "Sonstige Leistungen nach § 3a Abs. 2 UStG eines im übrigen Gemeinschaftsgebiet "
+                                          "ansässigen Unternehmers (§ 13b Abs. 1 UStG) (Z. 30, BMG)"},
+    "47": {"type": "TAX", "description": "Steuer zu Kz 46 (Z. 30)"},
+    "73": {"type": "NET", "description": "Umsätze, die unter das GrEStG fallen (§ 13b Abs. 2 Nr. 3 UStG) (Z. 31, BMG)"},
+    "74": {"type": "TAX", "description": "Steuer zu Kz 73 (Z. 31)"},
+    "84": {"type": "NET", "description": "Andere Leistungen (§ 13b Abs. 2 Nr. 1, 2, 4 bis 12 UStG), u. a. Werklieferungen und "
+                                          "sonstige Leistungen eines im Ausland ansässigen Unternehmers (Z. 32, BMG)"},
+    "85": {"type": "TAX", "description": "Steuer zu Kz 84 (Z. 32)"},
+    # Ergänzende Angaben zu Umsätzen
+    "60": {"type": "NET", "description": "Steuerpflichtige Umsätze des leistenden Unternehmers, für die der Leistungsempfänger "
+                                          "die Steuer nach § 13b Abs. 5 UStG schuldet (Z. 34)"},
+    "45": {"type": "NET", "description": "Übrige nicht steuerbare Umsätze (Leistungsort nicht im Inland) (Z. 36)"},
+    # Abziehbare Vorsteuerbeträge
+    "66": {"type": "TAX", "description": "Vorsteuerbeträge aus Rechnungen von anderen Unternehmern (§ 15 Abs. 1 S. 1 Nr. 1 UStG) (Z. 38)"},
+    "61": {"type": "TAX", "description": "Vorsteuerbeträge aus dem innergemeinschaftlichen Erwerb (§ 15 Abs. 1 S. 1 Nr. 3 UStG) (Z. 39)"},
+    "67": {"type": "TAX", "description": "Vorsteuerbeträge aus Leistungen im Sinne des § 13b UStG (§ 15 Abs. 1 S. 1 Nr. 4 UStG) (Z. 41)"},
+}
+
+#: Von ELSTER berechnete Kennziffern: nie als Eingabe, dürfen aber in der Versand-Übersicht stehen.
+COMPUTED_KZ: dict[str, str] = {
+    "83": "Verbleibende Umsatzsteuer-Vorauszahlung bzw. verbleibender Überschuss (Z. 50, Rechnungsergebnis)",
 }
 
 #: Vorsteuer-Kennziffern dürfen nie negativ sein (typischer Vorzeichenfehler).
-INPUT_TAX_KZ = frozenset({"60", "61", "66", "67"})
+INPUT_TAX_KZ = frozenset({"61", "66", "67"})
 
 class EurField(TypedDict):
     field: str

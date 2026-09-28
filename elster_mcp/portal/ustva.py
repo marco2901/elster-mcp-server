@@ -9,7 +9,7 @@ import re
 from playwright.async_api import Page
 
 from ..config import ElsterConfig
-from ..constants import INPUT_TAX_KZ, KENNZIFFERN, PORTAL_URLS
+from ..constants import COMPUTED_KZ, INPUT_TAX_KZ, KENNZIFFERN, PORTAL_URLS
 from ..models import UstvaReport
 from ..security import AuditLog, confirmation_code, new_nonce
 from ..sessions import Session, sessions
@@ -97,8 +97,6 @@ JS_SUMMARY_ROWS = """
   .filter(c => c.length >= 2)
 """
 
-#: Von ELSTER berechnete Kennziffern, die in der Versand-Übersicht zusätzlich erscheinen dürfen.
-COMPUTED_KZ = frozenset({"83"})
 
 
 def pick_draft(rows: list[dict], name: str) -> str | None:

@@ -129,7 +129,10 @@ async def elster_login_test() -> dict[str, Any]:
 
 @mcp.tool(annotations=LOCAL_ONLY)
 def elster_kennziffern_list() -> dict[str, Any]:
-    """Unterstützte UStVA-Kennziffern mit Beschreibung und Typ (NET = Bemessungsgrundlage, TAX = Steuerbetrag)."""
+    """Unterstützte UStVA-Kennziffern (Bezeichnungen nach Formular 2026) mit Typ: NET = Bemessungsgrundlage
+    in vollen Euro, TAX = Steuerbetrag in Euro/Cent. Kz 83 (verbleibende Vorauszahlung) berechnet ELSTER selbst
+    und wird nicht angegeben. Bei § 13b: Kz 46/47 EU-Dienstleister, Kz 84/85 u. a. Unternehmer außerhalb der
+    EU, Kz 73/74 nur Grundstücksumsätze (GrEStG); die Vorsteuer daraus gehört in Kz 67."""
     return dict(KENNZIFFERN)
 
 

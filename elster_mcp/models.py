@@ -8,7 +8,7 @@ from datetime import date
 
 from pydantic import BaseModel, field_validator
 
-from .constants import EUR_FIELDS, INPUT_TAX_KZ, KENNZIFFERN
+from .constants import COMPUTED_KZ, EUR_FIELDS, INPUT_TAX_KZ, KENNZIFFERN
 
 _MAX_AMOUNT = 100_000_000  # Plausibilitätsgrenze gegen Tippfehler (z. B. Cent statt Euro)
 _PERIOD_RE = re.compile(r"^(Q[1-4]|0?[1-9]|1[0-2])$")
@@ -62,6 +62,8 @@ class UstvaReport(BaseModel):
         clean: dict[str, float] = {}
         for raw_key, amount in v.items():
             key = raw_key.removeprefix("Kz").removeprefix("KZ").lstrip("0") or "0"
+            if key in COMPUTED_KZ:
+                raise ValueError(f"Kz{key} ({COMPUTED_KZ[key]}) berechnet ELSTER selbst – bitte nicht angeben")
             if key not in KENNZIFFERN:
                 raise ValueError(f"Unbekannte Kennziffer {raw_key!r} – siehe elster_kennziffern_list")
             amount = _check_amount(f"Kz{key}", float(amount))
