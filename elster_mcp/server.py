@@ -17,15 +17,16 @@ from . import __version__
 from .config import get_config
 from .constants import EUR_FIELDS, KENNZIFFERN
 from .filelinks import DEFAULT_TTL_SECONDS, file_links, resolve_download
-from .models import EstData, EurData, UstvaReport
+from .models import BelegeRequest, EstData, EurData, UstvaReport
 from .portal.base import ElsterPortal
+from .portal.belege import BelegeFlow
 from .portal.est import EstFlow
 from .portal.eur import EurFlow
 from .portal.sync import SyncFlow
 from .portal.ustva import UstvaFlow
 from .secrets import SecretError, insecure_permissions, validate_certificate
 from .security import AuditLog, codes_match
-from .sessions import sessions
+from .sessions import Session, sessions
 from .taxnumber import TaxNumberError, to_elster13
 from .xml import detect_reverse_charge, generate_ustva_xml
 
@@ -186,6 +187,44 @@ class SubmitApproval(BaseModel):
     code: str = Field(description="Bestätigungscode aus der Nachricht zur Übermittlung abtippen")
 
 
+async def _confirm(s: Session | None, kind: str, prefix: str, session_id: str, code: str, ctx: Context,
+                   question: str, lines: list[str]) -> dict[str, Any]:
+    """Gemeinsame Freigabe: Sperre, Status, Bestätigungscode, ggf. Elicitation – dann Phase 2 anstoßen."""
+    cfg = get_config()
+    audit = _audit()
+    if not s or s.kind != kind:
+        return {"error": "Sitzung nicht gefunden."}
+    if not cfg.security.allow_submit:
+        audit.write(f"{prefix}_confirm_blocked", session=session_id, reason="allow_submit=false")
+        return {
+            "error": "Übermittlung ist gesperrt (ELSTER_ALLOW_SUBMIT ist nicht gesetzt). "
+                     "Bitte im Portal selbst absenden oder die Sperre bewusst aufheben."
+        }
+    if s.status != "AWAITING_CONFIRM" or not s.confirmation_code:
+        return {"error": f"Sitzung ist nicht freigabebereit (Status {s.status})."}
+    if not codes_match(s.confirmation_code, code):
+        audit.write(f"{prefix}_confirm_rejected", session=session_id, reason="code_mismatch")
+        return {"error": "Bestätigungscode passt nicht zu dieser Sitzung."}
+
+    caps = ctx.client_capabilities
+    supports_elicitation = caps is not None and caps.elicitation is not None
+    if supports_elicitation:
+        msg = f"{question}\n" + "\n".join(lines) + f"\n\nZur Bestätigung den Code {s.confirmation_code} eingeben."
+        answer = await ctx.elicit(msg, SubmitApproval)
+        if answer.action != "accept" or not codes_match(s.confirmation_code, answer.data.code):
+            audit.write(f"{prefix}_confirm_rejected", session=session_id, reason=f"elicitation_{answer.action}")
+            return {"error": "Übermittlung vom Nutzer nicht bestätigt – nichts gesendet."}
+    elif cfg.security.require_elicitation:
+        audit.write(f"{prefix}_confirm_blocked", session=session_id, reason="no_elicitation_support")
+        return {"error": "Dieser MCP-Client unterstützt keine direkte Nutzerbestätigung (Elicitation); "
+                         "ELSTER_REQUIRE_ELICITATION verbietet die Übermittlung."}
+
+    audit.write(f"{prefix}_confirm_accepted", session=session_id, via="elicitation" if supports_elicitation else "code")
+    s.confirm_event.set()
+    await s.done_event.wait()
+    return {"status": s.status, "result": s.result, "errors": s.errors, "screenshotPath": s.screenshot_path}
+
+
 @mcp.tool(annotations=SUBMIT)
 async def elster_ustva_confirm(sessionId: str, confirmationCode: str, ctx: Context) -> dict[str, Any]:
     """ÜBERMITTELT eine geprüfte UStVA verbindlich an das Finanzamt ("Absenden").
@@ -194,45 +233,54 @@ async def elster_ustva_confirm(sessionId: str, confirmationCode: str, ctx: Conte
     zugestimmt hat. confirmationCode steht in elster_session_status und ist an genau diese
     Beträge gebunden.
     """
-    cfg = get_config()
-    audit = _audit()
     s = sessions.get(sessionId)
-    if not s or s.kind != "USTVA":
-        return {"error": "UStVA-Sitzung nicht gefunden."}
-    if not cfg.security.allow_submit:
-        audit.write("ustva_confirm_blocked", session=sessionId, reason="allow_submit=false")
-        return {
-            "error": "Übermittlung ist gesperrt (ELSTER_ALLOW_SUBMIT ist nicht gesetzt). "
-                     "Bitte im Portal selbst absenden oder die Sperre bewusst aufheben."
-        }
-    if s.status != "AWAITING_CONFIRM" or not s.confirmation_code:
-        return {"error": f"Sitzung ist nicht freigabebereit (Status {s.status})."}
-    if not codes_match(s.confirmation_code, confirmationCode):
-        audit.write("ustva_confirm_rejected", session=sessionId, reason="code_mismatch")
-        return {"error": "Bestätigungscode passt nicht zu dieser Sitzung."}
+    lines = [f"Kz{k}: {v['betrag']:.2f} € ({v['beschreibung']})" for k, v in (s.summary or {}).get("kennziffern", {}).items()] if s else []
+    question = f"UStVA {s.summary['year']} / {s.summary['period']} JETZT verbindlich an das Finanzamt übermitteln?" if s and s.summary else ""
+    return await _confirm(s, "USTVA", "ustva", sessionId, confirmationCode, ctx, question, lines)
 
-    caps = ctx.client_capabilities
-    supports_elicitation = caps is not None and caps.elicitation is not None
-    if supports_elicitation:
-        lines = [f"Kz{k}: {v['betrag']:.2f} € ({v['beschreibung']})" for k, v in s.summary["kennziffern"].items()]
-        msg = (
-            f"UStVA {s.summary['year']} / {s.summary['period']} JETZT verbindlich an das Finanzamt übermitteln?\n"
-            + "\n".join(lines)
-            + f"\n\nZur Bestätigung den Code {s.confirmation_code} eingeben."
-        )
-        answer = await ctx.elicit(msg, SubmitApproval)
-        if answer.action != "accept" or not codes_match(s.confirmation_code, answer.data.code):
-            audit.write("ustva_confirm_rejected", session=sessionId, reason=f"elicitation_{answer.action}")
-            return {"error": "Übermittlung vom Nutzer nicht bestätigt – nichts gesendet."}
-    elif cfg.security.require_elicitation:
-        audit.write("ustva_confirm_blocked", session=sessionId, reason="no_elicitation_support")
-        return {"error": "Dieser MCP-Client unterstützt keine direkte Nutzerbestätigung (Elicitation); "
-                         "ELSTER_REQUIRE_ELICITATION verbietet die Übermittlung."}
 
-    audit.write("ustva_confirm_accepted", session=sessionId, via="elicitation" if supports_elicitation else "code")
-    s.confirm_event.set()
-    await s.done_event.wait()
-    return {"status": s.status, "result": s.result, "errors": s.errors, "screenshotPath": s.screenshot_path}
+# --------------------------------------------------------------------------- #
+# Belegnachreichung (nur auf Anforderung des Finanzamts)
+# --------------------------------------------------------------------------- #
+
+@mcp.tool(annotations=PREPARE)
+async def elster_belege_start(year: int, text: str, files: list[str], zeitraum: int | str | None = None,
+                              steuerart: str = "Umsatzsteuer-Voranmeldung") -> dict[str, Any]:
+    """Bereitet eine Belegnachreichung vor: Formular füllen, Anhänge hochladen, Prüfung, Entwurf – dann PAUSE.
+
+    Nur verwenden, wenn das Finanzamt Belege angefordert hat; zur UStVA selbst werden keine Belege eingereicht.
+    Es wird noch nichts übermittelt. Versand erst nach Zustimmung des Menschen mit elster_belege_confirm.
+
+    Args:
+        year: Jahr, auf das sich die Belege beziehen
+        text: Erläuterung für das Finanzamt (z. B. „Angeforderte Rechnungen zu Kz 46/47, Schreiben vom …“)
+        files: Dateinamen aus elster_downloads_list (.pdf/.xml, je höchstens 10 MB, höchstens 20)
+        zeitraum: "Q1".."Q4", 1-12 oder "Jahr" (bei UStVA Pflicht)
+        steuerart: z. B. "Umsatzsteuer-Voranmeldung", "Einkommensteuererklärung", "Einnahmenüberschussrechnung"
+    """
+    try:
+        req = BelegeRequest(year=year, text=text, files=files, zeitraum=zeitraum, steuerart=steuerart)
+        s = BelegeFlow(get_config(), _audit()).start(req)
+    except ValidationError as exc:
+        return _validation_error(exc)
+    except (ValueError, FileNotFoundError) as exc:
+        return {"error": str(exc)}
+    return {"sessionId": s.id, "summary": s.summary, "submitEnabled": get_config().security.allow_submit}
+
+
+@mcp.tool(annotations=SUBMIT)
+async def elster_belege_confirm(sessionId: str, confirmationCode: str, ctx: Context) -> dict[str, Any]:
+    """ÜBERMITTELT eine vorbereitete Belegnachreichung verbindlich an das Finanzamt ("Absenden").
+
+    Nur nach ausdrücklicher Zustimmung des Menschen. Öffnet genau den gespeicherten Entwurf, prüft Steuerart,
+    Jahr, Zeitraum und alle Anhänge in der Versand-Übersicht und sendet nur, wenn alles passt.
+    """
+    s = sessions.get(sessionId)
+    summ = (s.summary or {}) if s else {}
+    lines = [f"{summ.get('steuerart')} {summ.get('year')} {summ.get('zeitraum') or ''}".rstrip()]
+    lines += [f"Anhang: {a['name']} ({a['size'] / 1024:.0f} KB)" for a in summ.get("anhaenge", [])]
+    question = "Belegnachreichung JETZT verbindlich an das Finanzamt übermitteln?"
+    return await _confirm(s, "BELEG", "belege", sessionId, confirmationCode, ctx, question, lines)
 
 
 # --------------------------------------------------------------------------- #

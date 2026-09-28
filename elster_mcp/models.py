@@ -5,8 +5,9 @@ from __future__ import annotations
 import math
 import re
 from datetime import date
+from typing import Literal
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 from .constants import COMPUTED_KZ, EUR_FIELDS, INPUT_TAX_KZ, KENNZIFFERN
 
@@ -115,3 +116,71 @@ class EstData(BaseModel):
             if isinstance(value, float):
                 _check_amount(key, value)
         return v
+
+
+#: Steuerarten im ELSTER-Formular „Belegnachreichung" (Auswahl, Texte wie im Formular).
+BELEG_STEUERARTEN = (
+    "Umsatzsteuer-Voranmeldung",
+    "Einkommensteuererklärung",
+    "Einnahmenüberschussrechnung",
+    "Gewerbesteuererklärung",
+    "Lohnsteuer-Anmeldung",
+    "Körperschaftsteuererklärung",
+)
+_MONTHS = ("Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September",
+           "Oktober", "November", "Dezember")
+
+
+def zeitraum_label(zeitraum: int | str) -> str:
+    """``"Q3"`` → ``"3. Kalendervierteljahr"``, ``9`` → ``"September"``, ``"Jahr"`` → ``"Kalenderjahr"``."""
+    z = str(zeitraum).strip()
+    if z.lower() in {"jahr", "kalenderjahr"}:
+        return "Kalenderjahr"
+    code = normalize_period(z)
+    return f"{code[1]}. Kalendervierteljahr" if code.startswith("4") else _MONTHS[int(code) - 1]
+
+
+class BelegeRequest(BaseModel):
+    """Belegnachreichung: nur auf Anforderung des Finanzamts, Dateien aus dem Download-Ordner."""
+
+    year: int
+    steuerart: Literal[BELEG_STEUERARTEN] = "Umsatzsteuer-Voranmeldung"  # type: ignore[valid-type]
+    zeitraum: int | str | None = None
+    text: str
+    files: list[str]
+
+    @field_validator("year")
+    @classmethod
+    def _year(cls, v: int) -> int:
+        return _check_year(v)
+
+    @field_validator("text")
+    @classmethod
+    def _text(cls, v: str) -> str:
+        v = re.sub(r"[^\S\n]+", " ", re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", v)).strip()
+        if not v:
+            raise ValueError("text ist leer – bitte angeben, wozu die Belege gehören (z. B. Anforderung vom …)")
+        if len(v) > 15000:
+            raise ValueError("text ist länger als 15.000 Zeichen")
+        return v
+
+    @field_validator("files")
+    @classmethod
+    def _files(cls, v: list[str]) -> list[str]:
+        if not 1 <= len(v) <= 20:
+            raise ValueError("files: 1 bis 20 Dateien")
+        if len(set(v)) != len(v):
+            raise ValueError("files: doppelte Dateinamen")
+        for name in v:
+            if not name.lower().endswith((".pdf", ".xml")):
+                raise ValueError(f"{name}: ELSTER nimmt nur .pdf und .xml an")
+        return v
+
+    @model_validator(mode="after")
+    def _zeitraum(self) -> BelegeRequest:
+        if self.zeitraum is None:
+            if self.steuerart in {"Umsatzsteuer-Voranmeldung", "Lohnsteuer-Anmeldung"}:
+                raise ValueError(f"zeitraum ist bei {self.steuerart} Pflicht (Q1-Q4 oder 1-12)")
+        else:
+            self.zeitraum = zeitraum_label(self.zeitraum)
+        return self

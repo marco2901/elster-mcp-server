@@ -148,6 +148,8 @@ Lokal ohne Traefik genügt `docker-compose.yml` im Repo-Root mit Secrets aus `./
 | `elster_ustva_detect_reverse_charge` | §13b-Erkennung anhand der Lieferantenmuster | Nein |
 | `elster_ustva_start` | Login, Formular, Prüfung, Entwurf in „Meine Formulare“ speichern, dann **Pause** bei `AWAITING_CONFIRM` | Nein |
 | `elster_ustva_confirm` | Öffnet den gespeicherten Entwurf, gleicht die Versand-Übersicht mit der Freigabe ab und klickt „Absenden“; nur mit Sperre aus + Freigabecode (+ Elicitation) | **Ja** |
+| `elster_belege_start` | Belegnachreichung (nur auf Anforderung des Finanzamts): Formular füllen, PDFs/XML aus dem Download-Ordner hochladen, Prüfung, Entwurf, dann **Pause** | Nein |
+| `elster_belege_confirm` | Versendet die Belegnachreichung aus dem Entwurf nach Abgleich; gleiche Sperren wie `elster_ustva_confirm` | **Ja** |
 | `elster_eur_start` | Anlage EÜR bis zur Prüfung füllen, als Entwurf speichern | Nein |
 | `elster_est_start` | ESt 1 A vorbereiten, 30 min zur Kontrolle offen | Nein |
 | `elster_session_status` / `_list` / `_cancel` | Sitzungsverwaltung; Status enthält Entwurfs-ID und (ab Freigabe) den Screenshot als Bild | Nein |
@@ -221,6 +223,8 @@ Die ursprüngliche Implementierung (Node.js ≥ 18, Puppeteer) liegt in `src/` u
 | `elster_ustva_detect_reverse_charge` | Detects §13b reverse-charge suppliers | No |
 | `elster_ustva_start` | Logs in, fills, runs Prüfung, saves a draft under „Meine Formulare“, then **pauses for confirmation** | Pauses |
 | `elster_ustva_confirm` | Reopens the saved draft, checks the send summary against the approved amounts, clicks "Absenden" | **Yes** |
+| `elster_belege_start` | Supporting documents on request (Belegnachreichung): fill, upload PDFs/XML, check, save draft, **pause** | Pauses |
+| `elster_belege_confirm` | Sends the Belegnachreichung from the draft after verification | **Yes** |
 | `elster_eur_start` | Fills Anlage EÜR up to Prüfung, then "Speichern und Verlassen" | No |
 | `elster_est_start` | Opens ESt 1 A, fills basics, runs Prüfung, keeps browser open 30 min | No |
 | `elster_sync_history` | Reads "Übermittelte Formulare" (optionally with PDFs) | No |

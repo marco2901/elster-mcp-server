@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-SessionKind = Literal["USTVA", "EUR", "EST"]
+SessionKind = Literal["USTVA", "EUR", "EST", "BELEG"]
 SessionStatus = Literal[
     "STARTING", "LOGGING_IN", "OPENING_FORM", "FILLING_PAGES", "PRUEFUNG",
     "AWAITING_CONFIRM", "AWAITING_REVIEW", "SUBMITTING", "SAVING", "SAVED",
