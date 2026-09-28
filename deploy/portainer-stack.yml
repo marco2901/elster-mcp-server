@@ -47,6 +47,7 @@ services:
       # Steuerpflichtiger
       - ELSTER_TAX_NUMBER=${ELSTER_TAX_NUMBER:-}
       - ELSTER_STATE_CODE=${ELSTER_STATE_CODE:-}
+      - ELSTER_TAX_ID=${ELSTER_TAX_ID:-}
       - ELSTER_NAME=${ELSTER_NAME:-}
       - ELSTER_FIRST_NAME=${ELSTER_FIRST_NAME:-}
       - ELSTER_STREET=${ELSTER_STREET:-}
