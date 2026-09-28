@@ -20,7 +20,7 @@ from ..security import AuditLog, confirmation_code, new_nonce
 from ..sessions import Session, sessions
 from ..taxnumber import validate_tax_id
 from .base import ElsterPortal, PortalError
-from .drafts import JS_PRUEF_RESULT, DraftMixin
+from .drafts import JS_CLICK_EXACT_BUTTON, JS_PRUEF_RESULT, DraftMixin
 
 log = logging.getLogger("elster_mcp.belege")
 
@@ -297,6 +297,9 @@ class BelegeFlow(DraftMixin, ElsterPortal):
             errors = res["errTexts"] or await self._error_list(page)
             s.screenshot_path = await self.screenshot(page, f"belege_pruefung_fehler_{s.id}")
             raise PortalError("ELSTER-Prüfung meldet Fehler: " + ("; ".join(errors) or "siehe Screenshot"))
+        # Weiter zur Übersicht – der Screenshot für die Freigabe zeigt dann Steuerart, Zeitraum und Anhänge.
+        if await page.evaluate(JS_CLICK_EXACT_BUTTON, "Weiter"):
+            await self._settle(page)
 
     async def _error_list(self, page: Page) -> list[str]:
         """Einträge der ELSTER-„Fehlerliste" im Navigationsbereich."""
