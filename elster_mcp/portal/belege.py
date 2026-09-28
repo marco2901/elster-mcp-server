@@ -177,8 +177,12 @@ class BelegeFlow(DraftMixin, ElsterPortal):
         await self.handle_modals(page)
 
     async def _open_form(self, page: Page) -> None:
-        await page.goto(FORM_URL, wait_until="networkidle", timeout=60000)
-        await self._settle(page)
+        for _ in range(2):
+            await page.goto(FORM_URL, wait_until="networkidle", timeout=60000)
+            await self._settle(page)
+            if not self._is_pending_tasks(page.url):
+                break
+            await self._discard_unsaved_restores(page)
         await page.locator("main button", has_text="Weiter").first.click()
         await self._settle(page)
         skip = page.locator("button", has_text="Ohne Datenübernahme fortfahren")

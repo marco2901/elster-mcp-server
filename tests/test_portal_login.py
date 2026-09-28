@@ -11,6 +11,11 @@ from elster_mcp.portal.base import ElsterPortal
 PENDING_URL = "https://www.elster.de/eportal/temporaereaufgaben"
 
 
+class _NoLoc:
+    async def count(self):
+        return 0
+
+
 class FakePage:
     def __init__(self, url, titles=None):
         self.url = url
@@ -18,6 +23,9 @@ class FakePage:
 
     async def evaluate(self, script, *args):
         return self._titles
+
+    def locator(self, selector):
+        return _NoLoc()
 
 
 def test_pending_tasks_page_counts_as_logged_in():
@@ -67,3 +75,60 @@ def test_login_test_without_pending_tasks(monkeypatch):
     monkeypatch.setattr(ElsterPortal, "login", fake_login)
     res = asyncio.run(server.elster_login_test())
     assert res == {"ok": True, "finalUrl": "https://www.elster.de/eportal/mein-elster/startseite"}
+
+
+RESTORE_TEXT = ("Formular wurde verlassen ohne zu Speichern Während Ihrer letzten Nutzung von Mein ELSTER haben Sie "
+                "folgendes Formular bearbeitet: UStVA 2026 - III. Kalendervierteljahr (automatisch gespeichert am "
+                "28.09.2026 um 16:11 Uhr) Sie haben die Bearbeitung nicht durch \"Speichern und Verlassen\" beendet. "
+                "Nein Ja, letzten Stand der Bearbeitung speichern")
+
+
+def test_parse_restore_prompt():
+    from elster_mcp.portal.base import parse_restore_prompt
+    assert parse_restore_prompt(RESTORE_TEXT) == {"form": "UStVA 2026 - III. Kalendervierteljahr",
+                                                  "savedAt": "28.09.2026 um 16:11 Uhr"}
+    assert parse_restore_prompt("irgendwas")["form"] == "unbekannt"
+
+
+def test_restore_prompt_is_answered_with_nein(tmp_path):
+    import json
+
+    clicked = []
+
+    class Loc:
+        def __init__(self, page, sel):
+            self.page, self.sel = page, sel
+
+        @property
+        def first(self):
+            return self
+
+        async def count(self):
+            return 1 if self.sel in ("#temporaereaufgaben_nein_button", "main") and PENDING_URL in self.page.url else 0
+
+        async def inner_text(self):
+            return RESTORE_TEXT
+
+        async def click(self):
+            clicked.append(self.sel)
+            self.page.url = "https://www.elster.de/eportal/meinelster"
+
+    class Page(FakePage):
+        def locator(self, selector):
+            assert "ja" not in selector.lower(), "„Ja“ darf nie angeklickt werden"
+            return Loc(self, selector)
+
+    portal = ElsterPortal(get_config())
+
+    async def no_wait(*a, **k):
+        return None
+
+    portal.wait_nav = no_wait
+    portal.sleep = no_wait
+    page = Page(PENDING_URL)
+    asyncio.run(portal._note_pending_tasks(page))
+    assert clicked == ["#temporaereaufgaben_nein_button"]
+    assert portal.pending_tasks is None
+    audit = [json.loads(line) for line in get_config().security.audit_log.read_text().splitlines()]
+    assert audit[-1]["event"] == "restore_discarded"
+    assert audit[-1]["form"] == "UStVA 2026 - III. Kalendervierteljahr"

@@ -215,6 +215,9 @@ class UstvaFlow(DraftMixin, ElsterPortal):
     async def _open_form(self, page: Page, year: int) -> None:
         for attempt in range(2):
             await page.goto(PORTAL_URLS["ustva_form"], wait_until="networkidle", timeout=60000)
+            if self._is_pending_tasks(page.url):
+                await self._discard_unsaved_restores(page)
+                await page.goto(PORTAL_URLS["ustva_form"], wait_until="networkidle", timeout=60000)
             if not await self.select_year(page, year):
                 raise PortalError(f"Jahr {year} nicht im UStVA-Formular auswählbar.")
             await self.click_enter(page)

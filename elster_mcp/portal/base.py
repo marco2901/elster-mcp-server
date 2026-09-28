@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -13,7 +14,7 @@ from playwright.async_api import Browser, BrowserContext, Page, Route, async_pla
 from ..config import ElsterConfig
 from ..constants import PORTAL_URLS
 from ..secrets import SecretError, validate_certificate
-from ..security import host_allowed, restrict_file, safe_child
+from ..security import AuditLog, host_allowed, restrict_file, safe_child
 
 log = logging.getLogger("elster_mcp.portal")
 
@@ -134,6 +135,15 @@ JS_FIND_BY_LABEL = """
 
 class PortalError(RuntimeError):
     pass
+
+
+_RESTORE_RE = re.compile(r"folgendes Formular bearbeitet:\s*(.+?)\s*\(automatisch gespeichert am\s*([^)]+)\)")
+
+
+def parse_restore_prompt(text: str) -> dict[str, str]:
+    """Formularname und Zeitstand aus ELSTERs Wiederherstellungsfrage (für Log/Audit)."""
+    m = _RESTORE_RE.search(text)
+    return {"form": m.group(1)[:120], "savedAt": m.group(2)[:40]} if m else {"form": "unbekannt", "savedAt": ""}
 
 
 class ElsterPortal:
@@ -320,7 +330,28 @@ class ElsterPortal:
     def _is_logged_in(self, url: str) -> bool:
         return any(m in url for m in LOGGED_IN_MARKERS) or self._is_pending_tasks(url)
 
+    async def _discard_unsaved_restores(self, page: Page) -> None:
+        """Beantwortet „Formular wurde verlassen ohne zu Speichern" mit „Nein".
+
+        „Ja" würde einen gespeicherten Entwurf mit dem ungespeicherten Zwischenstand überschreiben
+        (z. B. nach einem abgebrochenen Lauf). Gespeicherte Entwürfe bleiben unberührt.
+        """
+        for _ in range(5):
+            if not self._is_pending_tasks(page.url):
+                return
+            nein = page.locator("#temporaereaufgaben_nein_button")
+            if not await nein.count():
+                return
+            text = " ".join((await page.locator("main").first.inner_text()).split())
+            info = parse_restore_prompt(text)
+            await nein.first.click()
+            await self.wait_nav(page, 15000)
+            await self.sleep(1.5)
+            log.warning("Ungespeicherten Zwischenstand verworfen: %s (%s)", info["form"], info["savedAt"])
+            AuditLog(self.cfg.security.audit_log).write("restore_discarded", **info)
+
     async def _note_pending_tasks(self, page: Page) -> None:
+        await self._discard_unsaved_restores(page)
         if not self._is_pending_tasks(page.url):
             return
         try:
