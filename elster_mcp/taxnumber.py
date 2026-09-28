@@ -83,3 +83,23 @@ def to_elster13(tax_number: str, state_code: str) -> str:
     if len(result) != 13:  # Schutz gegen Tabellenfehler
         raise TaxNumberError("Interner Fehler bei der Steuernummer-Umwandlung.")
     return result
+
+
+def tax_id_check_digit(first10: str) -> int:
+    """Prüfziffer der Steuer-Identifikationsnummer (§ 139b AO, ISO 7064 MOD 11,10)."""
+    product = 10
+    for ch in first10:
+        total = (int(ch) + product) % 10 or 10
+        product = (total * 2) % 11
+    check = 11 - product
+    return 0 if check == 10 else check
+
+
+def validate_tax_id(value: str) -> str:
+    """Steuer-Identifikationsnummer: 11 Ziffern, keine führende 0, gültige Prüfziffer."""
+    digits = re.sub(r"\D", "", value)
+    if len(digits) != 11 or digits[0] == "0":
+        raise TaxNumberError("Steuer-Identifikationsnummer muss 11 Ziffern haben und darf nicht mit 0 beginnen.")
+    if tax_id_check_digit(digits[:10]) != int(digits[10]):
+        raise TaxNumberError("Steuer-Identifikationsnummer: Prüfziffer passt nicht (Tippfehler?).")
+    return digits

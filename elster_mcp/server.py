@@ -27,7 +27,7 @@ from .portal.ustva import UstvaFlow
 from .secrets import SecretError, insecure_permissions, validate_certificate
 from .security import AuditLog, codes_match
 from .sessions import Session, sessions
-from .taxnumber import TaxNumberError, to_elster13
+from .taxnumber import TaxNumberError, to_elster13, validate_tax_id
 from .xml import detect_reverse_charge, generate_ustva_xml
 
 log = logging.getLogger("elster_mcp.server")
@@ -90,6 +90,14 @@ def elster_security_check() -> dict[str, Any]:
             checks["taxNumber"]["elsterFormat"] = f"*********{elster13[-4:]}"  # maskiert, 13 Stellen
         except TaxNumberError as exc:
             checks["taxNumber"].update(ok=False, error=str(exc))
+    if cfg.taxpayer.tax_id:
+        try:
+            ti = validate_tax_id(cfg.taxpayer.tax_id)
+            checks["taxId"] = {"ok": True, "value": f"********{ti[-3:]}"}
+        except TaxNumberError as exc:
+            checks["taxId"] = {"ok": False, "error": str(exc)}
+    else:
+        checks["taxId"] = {"ok": False, "note": "ELSTER_TAX_ID fehlt – nur für die Belegnachreichung nötig"}
     checks["submission"] = {
         "allowSubmit": cfg.security.allow_submit,
         "requireElicitation": cfg.security.require_elicitation,

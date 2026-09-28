@@ -17,6 +17,7 @@ from ..filelinks import resolve_download
 from ..models import BelegeRequest
 from ..security import AuditLog, confirmation_code, new_nonce
 from ..sessions import Session, sessions
+from ..taxnumber import validate_tax_id
 from .base import ElsterPortal, PortalError
 from .drafts import JS_PRUEF_RESULT, DraftMixin
 
@@ -62,6 +63,10 @@ class BelegeFlow(DraftMixin, ElsterPortal):
         self.audit = audit
 
     def start(self, req: BelegeRequest) -> Session:
+        if not self.cfg.taxpayer.tax_id:
+            raise ValueError("ELSTER_TAX_ID (Steuer-Identifikationsnummer) fehlt – ELSTER verlangt sie "
+                             "bei der Belegnachreichung für natürliche Personen.")
+        validate_tax_id(self.cfg.taxpayer.tax_id)
         files = prepare_files(self.cfg.runtime.download_dir, req.files)
         s = sessions.create("BELEG")
         s.summary = {
@@ -216,7 +221,9 @@ class BelegeFlow(DraftMixin, ElsterPortal):
         if await typ.count():
             await typ.first.select_option(label="natürliche Person")
             await self.sleep(1)
-        for suffix, value in (("Person_AVorname)", tp.first_name), ("Person_AName)", tp.name)):
+        fields = (("Person_AIdentifikationsnummer)", validate_tax_id(tp.tax_id)),
+                  ("Person_AVorname)", tp.first_name), ("Person_AName)", tp.name))
+        for suffix, value in fields:
             if value:
                 el = await page.locator(f'input[id$="{suffix}"]').first.element_handle()
                 await self.type_into(page, el, value)

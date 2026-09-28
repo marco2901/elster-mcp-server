@@ -34,6 +34,8 @@ class AuthConfig(BaseModel):
 
 class TaxpayerConfig(BaseModel):
     tax_number: str = ""
+    #: Steuer-Identifikationsnummer (11 Ziffern) – ELSTER verlangt sie z. B. bei der Belegnachreichung.
+    tax_id: str = ""
     state_code: str = ""
     name: str = ""
     first_name: str = ""
@@ -117,6 +119,8 @@ class ElsterConfig(BaseModel):
         data = self.model_dump(mode="json", exclude={"auth", "http"})
         tn = self.taxpayer.tax_number
         data["taxpayer"]["tax_number"] = f"***{tn[-3:]}" if len(tn) > 3 else ("<set>" if tn else "<empty>")
+        ti = self.taxpayer.tax_id
+        data["taxpayer"]["tax_id"] = f"***{ti[-3:]}" if len(ti) > 3 else ("<set>" if ti else "<empty>")
         data["auth"] = {
             "pfx_path": self.auth.pfx_path or "<empty>",
             "password": "<set>" if self.auth.password else "<empty>",
@@ -200,6 +204,7 @@ def load_config() -> ElsterConfig:
         ),
         taxpayer=TaxpayerConfig(
             tax_number=_env("ELSTER_TAX_NUMBER", ft.get("taxNumber", "")),
+            tax_id=_env("ELSTER_TAX_ID", ft.get("taxId", "")).replace(" ", ""),
             state_code=_env("ELSTER_STATE_CODE", ft.get("stateCode", "")),
             name=_env("ELSTER_NAME", ft.get("name", "")),
             first_name=_env("ELSTER_FIRST_NAME", ft.get("firstName", "")),
@@ -256,6 +261,7 @@ def load_config() -> ElsterConfig:
         cfg.http.token.get_secret_value() if cfg.http.token else None,
         cfg.http.oidc_client_secret.get_secret_value() if cfg.http.oidc_client_secret else None,
         cfg.taxpayer.tax_number,
+        cfg.taxpayer.tax_id,
     )
 
     for d in (cfg.runtime.download_dir, cfg.runtime.screenshot_dir, cfg.security.audit_log.parent):

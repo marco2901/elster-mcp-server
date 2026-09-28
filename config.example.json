@@ -10,6 +10,8 @@
     "taxNumber": "",
     "$stateCodeComment": "ELSTER state code of your Finanzamt (first digits of the 13-digit tax number): BW 28, BY 9, BE 11, BB 30, HB 24, HH 22, HE 26, MV 40, NI 23, NW 5, RP 27, SL 10, SN 32, ST 31, SH 21, TH 41 (letter codes like 'HE' work too). Enter taxNumber as printed on your tax notice or in 13-digit form; the XML snapshot always uses the 13-digit form.",
     "stateCode": "",
+    "$taxIdComment": "11-digit Steuer-Identifikationsnummer; only needed for elster_belege_start (Belegnachreichung). Prefer ELSTER_TAX_ID.",
+    "taxId": "",
     "name": "",
     "firstName": "",
     "street": "",

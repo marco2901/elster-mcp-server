@@ -13,8 +13,10 @@ from elster_mcp.portal import belege
 from elster_mcp.portal.belege import BelegeFlow, prepare_files, verify_send_page
 from elster_mcp.security import AuditLog
 from elster_mcp.sessions import sessions
+from elster_mcp.taxnumber import TaxNumberError, tax_id_check_digit, validate_tax_id
 
 PDF = b"%PDF-1.4\n%test\n"
+TAX_ID = "8609574271" + str(tax_id_check_digit("8609574271"))
 
 
 @pytest.fixture
@@ -24,6 +26,7 @@ def downloads(tmp_path, monkeypatch):
     (d / "2026-09-01_Google_Rechnung.pdf").write_bytes(PDF)
     (d / "kein_pdf.pdf").write_bytes(b"MZ....")
     monkeypatch.setenv("ELSTER_DOWNLOAD_DIR", str(d))
+    monkeypatch.setenv("ELSTER_TAX_ID", TAX_ID)
     reset_config_cache()
     return d
 
@@ -177,3 +180,25 @@ def test_tools_registered_and_confirm_blocked(downloads):
 def test_start_tool_reports_file_errors(downloads):
     res = asyncio.run(server.elster_belege_start(2026, "Anforderung", ["fehlt.pdf"], "Q3"))
     assert "nicht gefunden" in res["error"]
+
+
+def test_validate_tax_id():
+    assert validate_tax_id(TAX_ID[:2] + " " + TAX_ID[2:]) == TAX_ID
+    wrong = TAX_ID[:10] + str((int(TAX_ID[10]) + 1) % 10)
+    with pytest.raises(TaxNumberError, match="Prüfziffer"):
+        validate_tax_id(wrong)
+    with pytest.raises(TaxNumberError, match="11 Ziffern"):
+        validate_tax_id("0" + TAX_ID[1:])
+
+
+def test_start_requires_tax_id(downloads, monkeypatch):
+    monkeypatch.delenv("ELSTER_TAX_ID")
+    reset_config_cache()
+    res = asyncio.run(server.elster_belege_start(2026, "Anforderung", ["2026-09-01_Google_Rechnung.pdf"], "Q3"))
+    assert "ELSTER_TAX_ID" in res["error"]
+
+
+def test_tax_id_masked(downloads):
+    check = server.elster_security_check()
+    assert check["taxId"] == {"ok": True, "value": "********" + TAX_ID[-3:]}
+    assert TAX_ID not in str(get_config().redacted())
