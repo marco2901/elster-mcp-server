@@ -17,6 +17,7 @@ from . import __version__
 from .config import get_config
 from .constants import EUR_FIELDS, KENNZIFFERN
 from .filelinks import DEFAULT_TTL_SECONDS, file_links, resolve_download
+from .imports import ImportError_, import_file
 from .models import BelegeRequest, EstData, EurData, UstvaReport
 from .portal.base import ElsterPortal
 from .portal.belege import BelegeFlow
@@ -423,6 +424,29 @@ def elster_file_link(name: str) -> dict[str, Any]:
         "expiresInSeconds": DEFAULT_TTL_SECONDS,
         "singleUse": True,
     }
+
+
+@mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, open_world_hint=True))
+def elster_downloads_import(sourceUrl: str, filename: str) -> dict[str, Any]:
+    """Holt eine Datei per Einmal-Link in den Download-Ordner, z. B. für elster_belege_start.
+
+    Typischer Ablauf: paperless_file_link(id) → Link hier als sourceUrl übergeben → Dateiname danach in
+    elster_belege_start(files=[…]) verwenden. Nur https-Links von freigegebenen Hosts (ELSTER_IMPORT_HOSTS),
+    nur .pdf/.xml bis 10 MB, keine Weiterleitungen; eine vorhandene Datei gleichen Namens wird nicht überschrieben.
+
+    Args:
+        sourceUrl: Einmal-Link (https)
+        filename: Zielname im Download-Ordner, z. B. "2026-09-01_BMW_Rechnung_52039926.pdf"
+    """
+    cfg = get_config()
+    try:
+        info = import_file(sourceUrl, filename, cfg.runtime.download_dir, cfg.security.import_hosts)
+    except ImportError_ as exc:
+        _audit().write("downloads_import_rejected", file=filename[:120], reason=str(exc))
+        return {"error": str(exc)}
+    _audit().write("downloads_import", file=info["name"], size=info["size"], sha256=info["sha256"],
+                   host=urlparse(sourceUrl).hostname)
+    return info
 
 
 @mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True, open_world_hint=False))

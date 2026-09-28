@@ -78,6 +78,8 @@ class SecurityConfig(BaseModel):
     audit_log: Path = Path("./audit/elster-audit.jsonl")
     #: Erlaubte Browser-Ziele – alle anderen Requests werden blockiert.
     allowed_hosts: list[str] = Field(default_factory=lambda: ["elster.de", "www.elster.de"])
+    #: Hosts, von denen elster_downloads_import Dateien holen darf (leer = Import aus).
+    import_hosts: list[str] = Field(default_factory=list)
 
 
 class HttpConfig(BaseModel):
@@ -234,6 +236,8 @@ def load_config() -> ElsterConfig:
             strict_permissions=strict,
             audit_log=Path(_env("ELSTER_AUDIT_LOG", fs.get("auditLog", "./audit/elster-audit.jsonl"))),
             allowed_hosts=fs.get("allowedHosts", SecurityConfig().allowed_hosts),
+            import_hosts=[h.strip().lower() for h in str(_env("ELSTER_IMPORT_HOSTS", ",".join(fs.get("importHosts", []))))
+                          .split(",") if h.strip()],
         ),
         http=HttpConfig(
             host=_env("ELSTER_MCP_HOST", fh.get("host", "127.0.0.1")),

@@ -148,6 +148,7 @@ Lokal ohne Traefik genügt `docker-compose.yml` im Repo-Root mit Secrets aus `./
 | `elster_ustva_detect_reverse_charge` | §13b-Erkennung anhand der Lieferantenmuster | Nein |
 | `elster_ustva_start` | Login, Formular, Prüfung, Entwurf in „Meine Formulare“ speichern, dann **Pause** bei `AWAITING_CONFIRM` | Nein |
 | `elster_ustva_confirm` | Öffnet den gespeicherten Entwurf, gleicht die Versand-Übersicht mit der Freigabe ab und klickt „Absenden“; nur mit Sperre aus + Freigabecode (+ Elicitation) | **Ja** |
+| `elster_downloads_import` | Datei per Einmal-Link (z. B. `paperless_file_link`) in den Download-Ordner holen; nur https, nur Hosts aus `ELSTER_IMPORT_HOSTS`, .pdf/.xml ≤10 MB | Nein |
 | `elster_belege_start` | Belegnachreichung (nur auf Anforderung des Finanzamts): Formular füllen, PDFs/XML aus dem Download-Ordner hochladen, Prüfung, Entwurf, dann **Pause** | Nein |
 | `elster_belege_confirm` | Versendet die Belegnachreichung aus dem Entwurf nach Abgleich; gleiche Sperren wie `elster_ustva_confirm` | **Ja** |
 | `elster_eur_start` | Anlage EÜR bis zur Prüfung füllen, als Entwurf speichern | Nein |
@@ -178,6 +179,7 @@ Lokal ohne Traefik genügt `docker-compose.yml` im Repo-Root mit Secrets aus `./
 | `ELSTER_PFX_PATH` | Pfad zur Zertifikatsdatei |
 | `ELSTER_PASSWORD_FILE` / `ELSTER_PASSWORD` | Zertifikats-Passwort (Datei bevorzugt) |
 | `ELSTER_TAX_NUMBER`, `ELSTER_STATE_CODE` | Steuernummer, Bundesland-Code |
+| `ELSTER_IMPORT_HOSTS` | Kommagetrennte Hosts, von denen `elster_downloads_import` laden darf (leer = aus) |
 | `ELSTER_TAX_ID`, `ELSTER_BIRTH_DATE` | Steuer-Identifikationsnummer und Geburtsdatum TT.MM.JJJJ (nur für `elster_belege_start`) |
 | `ELSTER_ALLOW_SUBMIT` | `1` = Übermittlung freigeschaltet (Standard: aus) |
 | `ELSTER_REQUIRE_ELICITATION` | `1` = nur mit direkter Nutzerbestätigung |
