@@ -32,15 +32,6 @@ KENNZIFFERN: dict[str, Kennziffer] = {
 #: Vorsteuer-Kennziffern dürfen nie negativ sein (typischer Vorzeichenfehler).
 INPUT_TAX_KZ = frozenset({"60", "61", "66", "67"})
 
-#: Welche UStVA-Formularseite (URL-Slug) welche Kennziffern enthält.
-USTVA_PAGE_KZ_MAP: dict[str, list[str]] = {
-    "LieferungenUndSonstigeLeistungen": ["81", "86"],
-    "LeistungenEmpfangenInnergemeinschaftlich": ["46"],
-    "LeistungenEmpfangenSonst": ["73"],
-    "AbziehbareVorsteuerbetraege": ["66", "61", "60", "67"],
-}
-
-
 class EurField(TypedDict):
     field: str
     labels: list[str]

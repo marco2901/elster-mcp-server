@@ -9,7 +9,7 @@ import re
 from playwright.async_api import Page
 
 from ..config import ElsterConfig
-from ..constants import INPUT_TAX_KZ, KENNZIFFERN, PORTAL_URLS, USTVA_PAGE_KZ_MAP
+from ..constants import INPUT_TAX_KZ, KENNZIFFERN, PORTAL_URLS
 from ..models import UstvaReport
 from ..security import AuditLog, confirmation_code, new_nonce
 from ..sessions import Session, sessions
@@ -17,26 +17,32 @@ from .base import ElsterPortal, PortalError
 
 log = logging.getLogger("elster_mcp.ustva")
 
-JS_FIND_KZ_BY_TEXT = """
-(kz) => {
-  for (const el of Array.from(document.querySelectorAll('*'))) {
-    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) continue;
-    const direct = Array.from(el.childNodes).filter(n => n.nodeType === 3)
-      .map(n => (n.textContent || '').trim()).join('').trim();
-    if (direct !== kz) continue;
-    const r = document.evaluate("preceding::input[not(@type='hidden')][1]", el, null,
-      XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-    const inp = r.singleNodeValue;
-    if (inp && inp.offsetParent !== null) return inp;
-    const parent = el.closest('div, tr, li, section');
-    if (parent) {
-      const inp2 = parent.querySelector('input:not([type="hidden"])');
-      if (inp2 && inp2.offsetParent !== null) return inp2;
-    }
-  }
-  return null;
-}
+# Alle sichtbaren, editierbaren Kennziffer-Felder der aktuellen Seite. ELSTER benennt sie stabil,
+# z. B. id="…_fields(eruAnmeldungssteuernSteuerfallUmsatzsteuervoranmeldungKz46)".
+JS_LIST_KZ_INPUTS = """
+() => Array.from(document.querySelectorAll('input:not([type="hidden"])'))
+  .filter(e => e.offsetParent !== null && !e.readOnly && !e.disabled && /Kz\\d+/.test((e.id || '') + (e.name || '')))
+  .map(e => ({ id: e.id || '', name: e.getAttribute('name') || '', placeholder: e.placeholder || '' }))
 """
+
+_KZ_FIELD_RE = re.compile(r"Kz(\d+)[)\]]$")
+
+
+def kz_of_field(field_id: str, name: str = "") -> str | None:
+    """Kennziffer aus der Feld-ID bzw. dem Feldnamen, nur bei exaktem Ende (``Kz46)``/``Kz46]``)."""
+    for candidate in (field_id, name):
+        m = _KZ_FIELD_RE.search(candidate or "")
+        if m:
+            return str(int(m.group(1)))
+    return None
+
+
+def format_kz_value(value: float, placeholder: str) -> str:
+    """„Euro, Cent“-Felder mit Komma und zwei Nachkommastellen, reine Euro-Felder ganzzahlig."""
+    if "cent" in placeholder.lower():
+        return f"{value:.2f}".replace(".", ",")
+    return str(round(value))
+
 
 JS_PRUEF_RESULT = """
 () => {
@@ -215,8 +221,12 @@ class UstvaFlow(ElsterPortal):
             s.log(f"[Seite {n}] {name}")
             if name == "AngabenUnternehmen":
                 await self._fill_angaben_unternehmen(page)
-            for kz in USTVA_PAGE_KZ_MAP.get(name, []):
-                if kz in wanted and kz not in filled and await self._fill_kz(page, kz, report[kz]):
+            # Felder über ihre Kennziffer finden statt über Seitennamen – ELSTER verschiebt Kennziffern
+            # zwischen Seiten (z. B. §13b: Kz 46/47/73 auf „LeistungsempfaengerAlsSteuerschuldner“).
+            for field in await page.evaluate(JS_LIST_KZ_INPUTS):
+                kz = kz_of_field(field["id"], field["name"])
+                if kz in wanted and kz not in filled:
+                    await self._fill_kz(page, field, kz, report[kz])
                     filled.add(kz)
                     s.log(f"  Kz{kz} = {report[kz]:.2f}")
 
@@ -255,32 +265,17 @@ class UstvaFlow(ElsterPortal):
                     if await self.fill_by_label(page, label, value):
                         break
 
-    async def _fill_kz(self, page: Page, kz: str, value: float) -> bool:
+    async def _fill_kz(self, page: Page, field: dict, kz: str, value: float) -> None:
         if kz in INPUT_TAX_KZ and value < 0:
             raise PortalError(f"Vorsteuer Kz{kz} negativ ({value:.2f}) – Abbruch.")
-        padded = kz.zfill(3)
-        el = None
-        for sel in (
-            f'input[id*="Kz{kz}"]:not([type="hidden"]):not([id*="EOL"])',
-            f'input[id*="Kz{padded}"]:not([type="hidden"]):not([id*="EOL"])',
-            f'input[name*="Kz{kz}"]:not([type="hidden"])',
-        ):
-            cand = await page.query_selector(sel)
-            if cand and await cand.is_visible():
-                el = cand
-                break
-        if el is None:
-            handle = await page.evaluate_handle(JS_FIND_KZ_BY_TEXT, kz)
-            el = handle.as_element()
-        if el is None:
-            log.warning("Kz%s: Eingabefeld nicht gefunden.", kz)
-            return False
-
-        placeholder = (await el.get_attribute("placeholder") or "").lower()
-        formatted = f"{value:.2f}".replace(".", ",") if "cent" in placeholder else str(round(value))
-        await self.type_into(page, el, formatted)
+        el = page.locator(f'[id="{field["id"]}"]' if field["id"] else f'input[name="{field["name"]}"]').first
+        formatted = format_kz_value(value, field["placeholder"])
+        await self.type_into(page, await el.element_handle(), formatted)
         await self.sleep(1)
-        return True
+        # Kontrolle: ELSTER formatiert u. U. mit Tausenderpunkten – Ziffern und Komma vergleichen.
+        shown = re.sub(r"[^\d,-]", "", await el.input_value())
+        if shown != formatted:
+            raise PortalError(f"Kz{kz}: eingetragen {formatted!r}, Formular zeigt {shown!r} – Abbruch.")
 
     async def _run_pruefung(self, page: Page, s: Session) -> None:
         if not await self.click_pruefen(page):
