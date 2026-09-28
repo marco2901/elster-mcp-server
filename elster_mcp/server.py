@@ -98,6 +98,8 @@ def elster_security_check() -> dict[str, Any]:
             checks["taxId"] = {"ok": False, "error": str(exc)}
     else:
         checks["taxId"] = {"ok": False, "note": "ELSTER_TAX_ID fehlt – nur für die Belegnachreichung nötig"}
+    checks["birthDate"] = {"ok": bool(cfg.taxpayer.birth_date),
+                           **({} if cfg.taxpayer.birth_date else {"note": "ELSTER_BIRTH_DATE fehlt – nur für die Belegnachreichung nötig"})}
     checks["submission"] = {
         "allowSubmit": cfg.security.allow_submit,
         "requireElicitation": cfg.security.require_elicitation,

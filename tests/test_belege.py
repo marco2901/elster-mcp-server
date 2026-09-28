@@ -8,9 +8,9 @@ from pydantic import ValidationError
 
 from elster_mcp import server
 from elster_mcp.config import get_config, reset_config_cache
-from elster_mcp.models import BelegeRequest, zeitraum_label
+from elster_mcp.models import BelegeRequest, check_birth_date, zeitraum_label
 from elster_mcp.portal import belege
-from elster_mcp.portal.belege import BelegeFlow, prepare_files, verify_send_page
+from elster_mcp.portal.belege import BelegeFlow, parse_error_list, prepare_files, verify_send_page
 from elster_mcp.security import AuditLog
 from elster_mcp.sessions import sessions
 from elster_mcp.taxnumber import TaxNumberError, tax_id_check_digit, validate_tax_id
@@ -27,6 +27,7 @@ def downloads(tmp_path, monkeypatch):
     (d / "kein_pdf.pdf").write_bytes(b"MZ....")
     monkeypatch.setenv("ELSTER_DOWNLOAD_DIR", str(d))
     monkeypatch.setenv("ELSTER_TAX_ID", TAX_ID)
+    monkeypatch.setenv("ELSTER_BIRTH_DATE", "01.02.1980")
     reset_config_cache()
     return d
 
@@ -202,3 +203,30 @@ def test_tax_id_masked(downloads):
     check = server.elster_security_check()
     assert check["taxId"] == {"ok": True, "value": "********" + TAX_ID[-3:]}
     assert TAX_ID not in str(get_config().redacted())
+
+
+def test_check_birth_date():
+    assert check_birth_date("01.02.1980") == "01.02.1980"
+    assert check_birth_date("1980-02-01") == "01.02.1980"
+    for bad in ("31.02.1980", "1.2.80", "01.02.1850", ""):
+        with pytest.raises(ValueError):
+            check_birth_date(bad)
+
+
+def test_start_requires_birth_date(downloads, monkeypatch):
+    monkeypatch.delenv("ELSTER_BIRTH_DATE")
+    reset_config_cache()
+    res = asyncio.run(server.elster_belege_start(2026, "Anforderung", ["2026-09-01_Google_Rechnung.pdf"], "Q3"))
+    assert "ELSTER_BIRTH_DATE" in res["error"]
+
+
+def test_parse_error_list():
+    text = ("Gefundene Fehler und Konflikte Ihre Angaben sind leider nicht korrekt: Bitte geben Sie bei natürlichen "
+            "Personen auch das Geburtsdatum an. 1 - Steuerpflichtige Person (bei Zusammenveranlagung: Ehemann) "
+            "Ihre Angaben sind leider nicht korrekt: Das Feld muss angegeben werden. 5 - Anhänge")
+    assert parse_error_list(text) == [
+        "1 - Steuerpflichtige Person (bei Zusammenveranlagung: Ehemann): "
+        "Bitte geben Sie bei natürlichen Personen auch das Geburtsdatum an.",
+        "5 - Anhänge: Das Feld muss angegeben werden.",
+    ]
+    assert parse_error_list("keine Fehler") == []

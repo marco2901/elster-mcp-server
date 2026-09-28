@@ -8,13 +8,14 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
 from pathlib import Path
 
 from playwright.async_api import Page
 
 from ..config import ElsterConfig
 from ..filelinks import resolve_download
-from ..models import BelegeRequest
+from ..models import BelegeRequest, check_birth_date
 from ..security import AuditLog, confirmation_code, new_nonce
 from ..sessions import Session, sessions
 from ..taxnumber import validate_tax_id
@@ -44,6 +45,17 @@ def prepare_files(download_dir: Path, names: list[str]) -> list[dict]:
     return files
 
 
+def parse_error_list(text: str) -> list[str]:
+    """„Ihre Angaben sind leider nicht korrekt: <Meldung> <Seite>" → ["<Seite>: <Meldung>", …]."""
+    flat = " ".join(text.split())
+    parts = flat.split("Ihre Angaben sind leider nicht korrekt:")[1:]
+    out = []
+    for part in parts:
+        m = re.match(r"\s*(.+?[.!])\s*(\d+ - [^.]+?)?\s*$", part.strip())
+        out.append(f"{m.group(2).strip()}: {m.group(1)}" if m and m.group(2) else part.strip()[:200])
+    return out[:10]
+
+
 def verify_send_page(text: str, req: BelegeRequest, files: list[dict]) -> list[str]:
     """Prüft die Versand-Übersicht gegen die Freigabe (leer = alles passt)."""
     flat = " ".join(text.split())
@@ -67,6 +79,10 @@ class BelegeFlow(DraftMixin, ElsterPortal):
             raise ValueError("ELSTER_TAX_ID (Steuer-Identifikationsnummer) fehlt – ELSTER verlangt sie "
                              "bei der Belegnachreichung für natürliche Personen.")
         validate_tax_id(self.cfg.taxpayer.tax_id)
+        if not self.cfg.taxpayer.birth_date:
+            raise ValueError("ELSTER_BIRTH_DATE (Geburtsdatum TT.MM.JJJJ) fehlt – ELSTER verlangt es "
+                             "bei der Belegnachreichung für natürliche Personen.")
+        check_birth_date(self.cfg.taxpayer.birth_date)
         files = prepare_files(self.cfg.runtime.download_dir, req.files)
         s = sessions.create("BELEG")
         s.summary = {
@@ -180,6 +196,12 @@ class BelegeFlow(DraftMixin, ElsterPortal):
                 await self.sleep(1)
         await self.sleep(1.5)
         await self.handle_modals(page)
+        # „Angaben noch nicht vollständig" betrifft beim Ausfüllen meist Pflichtfelder späterer Seiten –
+        # weitermachen; die ELSTER-Prüfung am Ende meldet, was wirklich fehlt, und bricht dann ab.
+        later = page.locator("#correctlater")
+        if await later.count() and await later.first.is_visible():
+            await later.first.click()
+            await self.sleep(1.5)
 
     async def _open_form(self, page: Page) -> None:
         for _ in range(2):
@@ -204,12 +226,6 @@ class BelegeFlow(DraftMixin, ElsterPortal):
                 return
             await page.locator("#NextPage").first.click()
             await self._settle(page)
-            # „Angaben noch nicht vollständig" betrifft beim Durchblättern Pflichtfelder späterer Seiten –
-            # weiterblättern, die ELSTER-Prüfung am Ende meldet, was wirklich fehlt.
-            later = page.locator("#correctlater")
-            if await later.count() and await later.first.is_visible():
-                await later.first.click()
-                await self._settle(page)
         if self.page_name(page.url) != target:
             raise PortalError(f"Seite {target} nicht erreicht (aktuell {self.page_name(page.url)}).")
 
@@ -228,7 +244,8 @@ class BelegeFlow(DraftMixin, ElsterPortal):
             await typ.first.select_option(label="natürliche Person")
             await self.sleep(1)
         fields = (("Person_AIdentifikationsnummer)", validate_tax_id(tp.tax_id)),
-                  ("Person_AVorname)", tp.first_name), ("Person_AName)", tp.name))
+                  ("Person_AVorname)", tp.first_name), ("Person_AName)", tp.name),
+                  ("Person_AGeburtsdatum)", check_birth_date(tp.birth_date)))
         for suffix, value in fields:
             if value:
                 el = await page.locator(f'input[id$="{suffix}"]').first.element_handle()
@@ -250,18 +267,26 @@ class BelegeFlow(DraftMixin, ElsterPortal):
         await page.keyboard.press("Tab")
         await self.sleep(1)
 
+    async def _visible(self, page: Page, selector: str):  # noqa: ANN202
+        loc = page.locator(selector)
+        for i in range(await loc.count() - 1, -1, -1):
+            if await loc.nth(i).is_visible():
+                return loc.nth(i)
+        raise PortalError(f"Feld {selector} nicht gefunden.")
+
     async def _upload(self, page: Page, files: list[dict]) -> None:
-        await page.locator("#anhang_mzb_anhang_multiUpload").set_input_files([f["path"] for f in files])
-        await self._settle(page)
-        # Bezeichnung je Anhang: Dateiname ohne Endung, falls ELSTER sie nicht selbst setzt.
-        names = page.locator('input[id$="AnhangDateibezeichnung)"]')
-        for i in range(await names.count()):
-            el = names.nth(i)
-            if await el.is_visible() and not await el.input_value() and i < len(files):
-                await el.fill(Path(files[i]["name"]).stem[:100])
-        take = page.locator('button[id^="CreateMzbItem/"][id*="/Anhaenge"]')
-        if await take.count() and await take.first.is_enabled():
-            await take.first.click()
+        """Je Anhang: Bezeichnung, Datei, „Eintrag übernehmen" – ELSTER verlangt alle Angaben pro Eintrag."""
+        for n, f in enumerate(files):
+            if n:
+                await page.locator('button[id^="AddMzbItem/"][id*="/Anhaenge"]').first.click()
+                await self._settle(page)
+            desc = await self._visible(page, 'input[id$="AnhangDateibezeichnung)"]')
+            await desc.fill(Path(f["name"]).stem[:100])
+            await page.keyboard.press("Tab")
+            upload = page.locator('input[type="file"][id$="AnhangDateiname)"]').last
+            await upload.set_input_files(f["path"])
+            await self._settle(page)
+            await page.locator('button[id^="CreateMzbItem/"][id*="/Anhaenge"]').first.click()
             await self._settle(page)
 
     async def _pruefen(self, page: Page, s: Session) -> None:
@@ -269,5 +294,16 @@ class BelegeFlow(DraftMixin, ElsterPortal):
         await self._settle(page)
         res = await page.evaluate(JS_PRUEF_RESULT)
         if res["hasErrors"] and not res["noErrors"]:
+            errors = res["errTexts"] or await self._error_list(page)
             s.screenshot_path = await self.screenshot(page, f"belege_pruefung_fehler_{s.id}")
-            raise PortalError("ELSTER-Prüfung meldet Fehler: " + ("; ".join(res["errTexts"]) or "siehe Screenshot"))
+            raise PortalError("ELSTER-Prüfung meldet Fehler: " + ("; ".join(errors) or "siehe Screenshot"))
+
+    async def _error_list(self, page: Page) -> list[str]:
+        """Einträge der ELSTER-„Fehlerliste" im Navigationsbereich."""
+        link = page.locator("#fehlerliste_link")
+        if not await link.count():
+            return []
+        await link.first.click()
+        await self.sleep(2)
+        text = await page.evaluate("() => (document.querySelector('.page-form__treeTop') || document.body).innerText")
+        return parse_error_list(text)

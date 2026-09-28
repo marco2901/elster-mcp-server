@@ -178,7 +178,7 @@ Lokal ohne Traefik genügt `docker-compose.yml` im Repo-Root mit Secrets aus `./
 | `ELSTER_PFX_PATH` | Pfad zur Zertifikatsdatei |
 | `ELSTER_PASSWORD_FILE` / `ELSTER_PASSWORD` | Zertifikats-Passwort (Datei bevorzugt) |
 | `ELSTER_TAX_NUMBER`, `ELSTER_STATE_CODE` | Steuernummer, Bundesland-Code |
-| `ELSTER_TAX_ID` | Steuer-Identifikationsnummer (nur für `elster_belege_start`) |
+| `ELSTER_TAX_ID`, `ELSTER_BIRTH_DATE` | Steuer-Identifikationsnummer und Geburtsdatum TT.MM.JJJJ (nur für `elster_belege_start`) |
 | `ELSTER_ALLOW_SUBMIT` | `1` = Übermittlung freigeschaltet (Standard: aus) |
 | `ELSTER_REQUIRE_ELICITATION` | `1` = nur mit direkter Nutzerbestätigung |
 | `ELSTER_STRICT_PERMISSIONS` | `1` = unsichere Dateirechte sind ein Fehler |

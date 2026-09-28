@@ -184,3 +184,18 @@ class BelegeRequest(BaseModel):
         else:
             self.zeitraum = zeitraum_label(self.zeitraum)
         return self
+
+
+def check_birth_date(value: str) -> str:
+    """TT.MM.JJJJ (auch JJJJ-MM-TT), plausibles Datum → TT.MM.JJJJ."""
+    from datetime import datetime
+
+    for fmt in ("%d.%m.%Y", "%Y-%m-%d"):
+        try:
+            d = datetime.strptime(value.strip(), fmt).date()
+        except ValueError:
+            continue
+        if not 1900 <= d.year <= date.today().year:
+            break
+        return d.strftime("%d.%m.%Y")
+    raise ValueError("Geburtsdatum bitte als TT.MM.JJJJ angeben (ELSTER_BIRTH_DATE).")

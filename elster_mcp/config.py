@@ -36,6 +36,8 @@ class TaxpayerConfig(BaseModel):
     tax_number: str = ""
     #: Steuer-Identifikationsnummer (11 Ziffern) – ELSTER verlangt sie z. B. bei der Belegnachreichung.
     tax_id: str = ""
+    #: Geburtsdatum TT.MM.JJJJ – ELSTER verlangt es bei der Belegnachreichung für natürliche Personen.
+    birth_date: str = ""
     state_code: str = ""
     name: str = ""
     first_name: str = ""
@@ -121,6 +123,7 @@ class ElsterConfig(BaseModel):
         data["taxpayer"]["tax_number"] = f"***{tn[-3:]}" if len(tn) > 3 else ("<set>" if tn else "<empty>")
         ti = self.taxpayer.tax_id
         data["taxpayer"]["tax_id"] = f"***{ti[-3:]}" if len(ti) > 3 else ("<set>" if ti else "<empty>")
+        data["taxpayer"]["birth_date"] = "<set>" if self.taxpayer.birth_date else "<empty>"
         data["auth"] = {
             "pfx_path": self.auth.pfx_path or "<empty>",
             "password": "<set>" if self.auth.password else "<empty>",
@@ -205,6 +208,7 @@ def load_config() -> ElsterConfig:
         taxpayer=TaxpayerConfig(
             tax_number=_env("ELSTER_TAX_NUMBER", ft.get("taxNumber", "")),
             tax_id=_env("ELSTER_TAX_ID", ft.get("taxId", "")).replace(" ", ""),
+            birth_date=_env("ELSTER_BIRTH_DATE", ft.get("birthDate", "")).strip(),
             state_code=_env("ELSTER_STATE_CODE", ft.get("stateCode", "")),
             name=_env("ELSTER_NAME", ft.get("name", "")),
             first_name=_env("ELSTER_FIRST_NAME", ft.get("firstName", "")),

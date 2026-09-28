@@ -12,6 +12,8 @@
     "stateCode": "",
     "$taxIdComment": "11-digit Steuer-Identifikationsnummer; only needed for elster_belege_start (Belegnachreichung). Prefer ELSTER_TAX_ID.",
     "taxId": "",
+    "$birthDateComment": "TT.MM.JJJJ; only needed for elster_belege_start. Prefer ELSTER_BIRTH_DATE.",
+    "birthDate": "",
     "name": "",
     "firstName": "",
     "street": "",
