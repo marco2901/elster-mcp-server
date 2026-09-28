@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from mcp.server.mcpserver import Context, MCPServer
-from mcp.types import ToolAnnotations
+from mcp.server.mcpserver import Context, Image, MCPServer
+from mcp.types import TextContent, ToolAnnotations
 from pydantic import BaseModel, Field, ValidationError
 
 from . import __version__
@@ -28,6 +30,8 @@ from .taxnumber import TaxNumberError, to_elster13
 from .xml import detect_reverse_charge, generate_ustva_xml
 
 log = logging.getLogger("elster_mcp.server")
+
+SCREENSHOT_STATES = frozenset({"AWAITING_CONFIRM", "DONE", "ERROR"})
 
 INSTRUCTIONS = """\
 ELSTER-Automatisierung über das Web-Portal mit dem Zertifikat des Nutzers.
@@ -265,10 +269,20 @@ async def elster_est_start(year: int, data: dict[str, float | str] | None = None
 # --------------------------------------------------------------------------- #
 
 @mcp.tool(annotations=LOCAL_ONLY)
-async def elster_session_status(sessionId: str) -> dict[str, Any]:
-    """Status, Fortschritt, Zusammenfassung, Screenshot-Pfad und ggf. Bestätigungscode einer Sitzung."""
+async def elster_session_status(sessionId: str, includeScreenshot: bool = True) -> list[TextContent | Image]:
+    """Status, Fortschritt, Zusammenfassung, Entwurf (ID in „Meine Formulare") und ggf. Bestätigungscode.
+
+    Wartet die Sitzung auf Freigabe oder ist sie beendet, wird der letzte Screenshot (ELSTER-Übersicht)
+    als Bild mitgeliefert – includeScreenshot=false unterdrückt das.
+    """
     s = sessions.get(sessionId)
-    return s.view() if s else {"error": "Sitzung nicht gefunden."}
+    if not s:
+        return [TextContent(type="text", text=json.dumps({"error": "Sitzung nicht gefunden."}, ensure_ascii=False))]
+    out: list[TextContent | Image] = [TextContent(type="text", text=json.dumps(s.view(), ensure_ascii=False))]
+    shot = Path(s.screenshot_path) if s.screenshot_path else None
+    if includeScreenshot and shot and shot.is_file() and s.status in SCREENSHOT_STATES:
+        out.append(Image(data=shot.read_bytes(), format="png"))
+    return out
 
 
 @mcp.tool(annotations=LOCAL_ONLY)

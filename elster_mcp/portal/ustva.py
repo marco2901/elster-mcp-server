@@ -80,6 +80,80 @@ JS_EXTRACT_TICKET = """
 """
 
 
+# --------------------------------------------------------------------------- #
+# Entwurf „Meine Formulare“ und Abgleich der Versand-Übersicht (ohne Browser testbar)
+# --------------------------------------------------------------------------- #
+
+JS_DRAFT_ROWS = """
+() => Array.from(document.querySelectorAll('[id^="oeffneEntwurf_"]')).map(b => ({
+  id: b.id.replace('oeffneEntwurf_', ''),
+  name: (b.innerText || b.textContent || '').replace(/\\s+/g, ' ').trim(),
+}))
+"""
+
+JS_SUMMARY_ROWS = """
+() => Array.from(document.querySelectorAll('table tr')).filter(r => r.offsetParent !== null)
+  .map(r => Array.from(r.querySelectorAll('td, th')).map(c => (c.innerText || '').replace(/\\s+/g, ' ').trim()))
+  .filter(c => c.length >= 2)
+"""
+
+#: Von ELSTER berechnete Kennziffern, die in der Versand-Übersicht zusätzlich erscheinen dürfen.
+COMPUTED_KZ = frozenset({"83"})
+
+
+def pick_draft(rows: list[dict], name: str) -> str | None:
+    """Neuester Entwurf mit exakt dieser Bezeichnung (ELSTER vergibt aufsteigende IDs)."""
+    ids = [int(r["id"]) for r in rows if r.get("name") == name and str(r.get("id", "")).isdigit()]
+    return str(max(ids)) if ids else None
+
+
+def parse_amount(text: str) -> float | None:
+    """„1.234,56 €" → 1234.56; „214 €" → 214.0; sonst None."""
+    m = re.fullmatch(r"(-?[\d.]+(?:,\d{1,2})?)\s*€?", text.strip())
+    if not m:
+        return None
+    return float(m.group(1).replace(".", "").replace(",", "."))
+
+
+def parse_summary(rows: list[list[str]]) -> tuple[dict[str, str], dict[str, float]]:
+    """Versand-Übersicht → (Allgemein-Angaben, Kennziffer → Betrag)."""
+    general: dict[str, str] = {}
+    amounts: dict[str, float] = {}
+    for cells in rows:
+        kz_idx = next((i for i, c in enumerate(cells[1:], 1) if re.fullmatch(r"\d{1,3}", c)), None)
+        if kz_idx is not None and kz_idx + 1 < len(cells):
+            value = parse_amount(cells[kz_idx + 1])
+            if value is not None:
+                amounts[str(int(cells[kz_idx]))] = value
+                continue
+        if cells[0] and cells[-1] and cells[0] != "Kennzahl":
+            general.setdefault(cells[0], cells[-1])
+    return general, amounts
+
+
+def verify_summary(rows: list[list[str]], report: dict[str, float], year: int, period_label: str) -> list[str]:
+    """Abweichungen zwischen Versand-Übersicht und freigegebenen Beträgen (leer = alles passt)."""
+    general, amounts = parse_summary(rows)
+    problems: list[str] = []
+    if general.get("Jahr") != str(year):
+        problems.append(f"Jahr {general.get('Jahr')!r} statt {year}")
+    if period_label and general.get("Zeitraum") != period_label:
+        problems.append(f"Zeitraum {general.get('Zeitraum')!r} statt {period_label!r}")
+    expected = {k: v for k, v in report.items() if v != 0}
+    for kz, value in expected.items():
+        shown = amounts.get(kz)
+        if shown is None:
+            problems.append(f"Kz{kz} fehlt")
+        elif abs(shown - value) >= 0.005 and not (shown == int(shown) and abs(shown - round(value)) < 0.005):
+            problems.append(f"Kz{kz} = {shown:.2f} statt {value:.2f}")
+    for kz, shown in amounts.items():
+        if kz not in expected and kz not in COMPUTED_KZ and shown != 0:
+            problems.append(f"Kz{kz} = {shown:.2f} nicht freigegeben")
+    if not amounts:
+        problems.append("Keine Kennziffern in der Übersicht gefunden")
+    return problems
+
+
 class UstvaFlow(ElsterPortal):
     def __init__(self, cfg: ElsterConfig, audit: AuditLog) -> None:
         super().__init__(cfg)
@@ -104,6 +178,7 @@ class UstvaFlow(ElsterPortal):
     async def _run(self, s: Session, ustva: UstvaReport) -> None:
         nonce = new_nonce()
         try:
+            # Phase 1: ausfüllen, prüfen, als Entwurf in „Meine Formulare" speichern – dann Browser schließen.
             async with sessions.browser_slots, self.open() as page:
                 s.status = "LOGGING_IN"
                 s.log(f"UStVA {ustva.year} / {ustva.period}: Login …")
@@ -125,26 +200,53 @@ class UstvaFlow(ElsterPortal):
                 await self._run_pruefung(page, s)
                 s.screenshot_path = await self.screenshot(page, f"ustva_pruefung_{s.id}")
 
-                s.confirmation_code = confirmation_code(s.id, s.summary or {}, nonce)
-                s.status = "AWAITING_CONFIRM"
-                s.log("Prüfung bestanden – warte auf ausdrückliche Freigabe.")
-                self.audit.write("ustva_awaiting_confirm", session=s.id)
+                s.status = "SAVING"
+                s.log("Speichere Entwurf in „Meine Formulare“ …")
+                draft_id, draft_name = await self._save_draft(page)
+                s.draft = {"id": draft_id, "name": draft_name}
+                s.log(f"Entwurf gespeichert: {draft_name} (ID {draft_id})")
+                self.audit.write("ustva_draft_saved", session=s.id, draft=draft_id)
 
-                timeout = self.cfg.security.confirm_timeout_minutes * 60
-                try:
-                    await asyncio.wait_for(s.confirm_event.wait(), timeout=timeout)
-                except asyncio.TimeoutError as exc:
-                    raise PortalError(f"Keine Freigabe innerhalb von {timeout // 60} min – nichts übermittelt.") from exc
+            # Freigabe-Code bindet Beträge UND Entwurf.
+            assert s.summary is not None
+            s.summary["draftId"] = draft_id
+            s.confirmation_code = confirmation_code(s.id, s.summary, nonce)
+            s.status = "AWAITING_CONFIRM"
+            s.log("Prüfung bestanden, Entwurf gespeichert – warte auf ausdrückliche Freigabe.")
+            self.audit.write("ustva_awaiting_confirm", session=s.id, draft=draft_id)
 
+            timeout = self.cfg.security.confirm_timeout_minutes * 60
+            try:
+                await asyncio.wait_for(s.confirm_event.wait(), timeout=timeout)
+            except asyncio.TimeoutError as exc:
+                raise PortalError(
+                    f"Keine Freigabe innerhalb von {timeout // 60} min – nichts übermittelt. "
+                    f"Der Entwurf {draft_id} bleibt in „Meine Formulare“."
+                ) from exc
+
+            # Phase 2: gespeicherten Entwurf öffnen, Übersicht gegen die Freigabe prüfen, absenden.
+            async with sessions.browser_slots, self.open() as page:
                 s.status = "SUBMITTING"
+                s.log(f"Öffne Entwurf {draft_id} …")
+                await self.login(page)
+                await self._open_draft(page, draft_id)
+                await self._goto_send_page(page)
+                rows = await page.evaluate(JS_SUMMARY_ROWS)
+                period_label = draft_name.split(" - ", 1)[1] if " - " in draft_name else ""
+                problems = verify_summary(rows, ustva.report, ustva.year, period_label)
+                s.screenshot_path = await self.screenshot(page, f"ustva_versand_{s.id}")
+                if problems:
+                    self.audit.write("ustva_draft_mismatch", session=s.id, draft=draft_id, problems=problems)
+                    raise PortalError("Entwurf weicht von der Freigabe ab – nichts übermittelt: " + "; ".join(problems))
+
                 s.log("Sende an ELSTER …")
-                self.audit.write("ustva_submitting", session=s.id)
+                self.audit.write("ustva_submitting", session=s.id, draft=draft_id)
                 ticket = await self._submit(page)
                 s.screenshot_path = await self.screenshot(page, f"ustva_submitted_{s.id}")
-                s.result = {"success": True, **ticket}
+                s.result = {"success": True, "draftId": draft_id, **ticket}
                 s.status = "DONE"
                 s.log(f"Übermittelt. Transferticket: {ticket.get('ticket') or '?'}")
-                self.audit.write("ustva_submitted", session=s.id, **ticket)
+                self.audit.write("ustva_submitted", session=s.id, draft=draft_id, **ticket)
         except asyncio.CancelledError:
             s.status = "CANCELLED"
             self.audit.write("ustva_cancelled", session=s.id)
@@ -159,6 +261,54 @@ class UstvaFlow(ElsterPortal):
             sessions.schedule_cleanup(s.id)
 
     # ------------------------------------------------------------------ #
+
+    async def _save_draft(self, page: Page) -> tuple[str, str]:
+        """„Speichern und Formular verlassen" → Entwurf; liefert (Entwurfs-ID, Bezeichnung)."""
+        await page.click("#verlassenModal")
+        save = page.locator("#saveAufgabe")
+        await save.wait_for(state="visible", timeout=15000)
+        text = await page.locator(".modal").filter(has=save).first.inner_text()
+        m = re.search(r"Bezeichnung gespeichert:\s*(.+?)\s*(?:Ordnungskriterium|Sie finden|$)", " ".join(text.split()))
+        if not m:
+            raise PortalError("Bezeichnung des Entwurfs nicht erkannt – Abbruch.")
+        name = m.group(1).strip()
+        async with page.expect_navigation(timeout=30000):
+            await save.click()
+        rows = await self._draft_rows(page)
+        draft_id = pick_draft(rows, name)
+        if not draft_id:
+            raise PortalError(f"Gespeicherter Entwurf „{name}“ nicht in „Meine Formulare“ gefunden.")
+        return draft_id, name
+
+    async def _draft_rows(self, page: Page) -> list[dict]:
+        await page.goto(PORTAL_URLS["meine_formulare"], wait_until="networkidle", timeout=30000)
+        await self.sleep(2)
+        await self.handle_modals(page)
+        await page.click("#meineFormulare-entwuerfe_tab_desktop")
+        await self.sleep(2)
+        return await page.evaluate(JS_DRAFT_ROWS)
+
+    async def _open_draft(self, page: Page, draft_id: str) -> None:
+        if not draft_id.isdigit():
+            raise PortalError("Ungültige Entwurfs-ID.")
+        await self._draft_rows(page)
+        btn = page.locator(f"#oeffneEntwurf_{draft_id}")
+        if await btn.count() == 0:
+            raise PortalError(f"Entwurf {draft_id} nicht mehr in „Meine Formulare“ – nichts übermittelt.")
+        async with page.expect_navigation(timeout=30000):
+            await btn.click()
+        await self.sleep(3)
+        await self.handle_modals(page)
+
+    async def _goto_send_page(self, page: Page) -> None:
+        """Wechselt in „Versenden des Formulars" (ELSTER prüft dabei erneut)."""
+        async with page.expect_navigation(timeout=60000):
+            await page.click("#SwitchModusSenden")
+        await self.sleep(3)
+        await self.handle_modals(page)
+        res = await page.evaluate(JS_PRUEF_RESULT)
+        if res["hasErrors"] and not res["noErrors"]:
+            raise PortalError("ELSTER meldet Fehler im Entwurf – nichts übermittelt: " + "; ".join(res["errTexts"]))
 
     async def _open_form(self, page: Page, year: int) -> None:
         for attempt in range(2):

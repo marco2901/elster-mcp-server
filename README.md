@@ -146,11 +146,11 @@ Lokal ohne Traefik genügt `docker-compose.yml` im Repo-Root mit Secrets aus `./
 | `elster_kennziffern_list` | Unterstützte UStVA-Kennziffern | Nein |
 | `elster_ustva_generate_xml` | UStVA validieren + XML-Snapshot fürs Archiv | Nein |
 | `elster_ustva_detect_reverse_charge` | §13b-Erkennung anhand der Lieferantenmuster | Nein |
-| `elster_ustva_start` | Login, Formular, Prüfung, dann **Pause** bei `AWAITING_CONFIRM` | Nein |
-| `elster_ustva_confirm` | „Absenden“, nur mit Sperre aus + Freigabecode (+ Elicitation) | **Ja** |
+| `elster_ustva_start` | Login, Formular, Prüfung, Entwurf in „Meine Formulare“ speichern, dann **Pause** bei `AWAITING_CONFIRM` | Nein |
+| `elster_ustva_confirm` | Öffnet den gespeicherten Entwurf, gleicht die Versand-Übersicht mit der Freigabe ab und klickt „Absenden“; nur mit Sperre aus + Freigabecode (+ Elicitation) | **Ja** |
 | `elster_eur_start` | Anlage EÜR bis zur Prüfung füllen, als Entwurf speichern | Nein |
 | `elster_est_start` | ESt 1 A vorbereiten, 30 min zur Kontrolle offen | Nein |
-| `elster_session_status` / `_list` / `_cancel` | Sitzungsverwaltung | Nein |
+| `elster_session_status` / `_list` / `_cancel` | Sitzungsverwaltung; Status enthält Entwurfs-ID und (ab Freigabe) den Screenshot als Bild | Nein |
 | `elster_sync_history` | „Übermittelte Formulare“ lesen | Nein |
 | `elster_sync_inbox` | Posteingang lesen (Betreff, Lesestatus), optional Nachrichten-PDF + alle Anhänge | Nein |
 | `elster_downloads_list` | Heruntergeladene Dateien auf dem Server auflisten | Nein |
@@ -163,7 +163,7 @@ Lokal ohne Traefik genügt `docker-compose.yml` im Repo-Root mit Secrets aus `./
 1. elster_security_check                      → ok: true
 2. elster_ustva_start(year=2026, period="Q1",
      report={"81": 12000, "86": 300, "66": 1845.30})   → sessionId
-3. elster_session_status(sessionId)           → AWAITING_CONFIRM, summary, screenshotPath, confirmationCode
+3. elster_session_status(sessionId)           → AWAITING_CONFIRM, summary, draft, Screenshot, confirmationCode
    → Mensch prüft Screenshot + Beträge
 4. elster_ustva_confirm(sessionId, confirmationCode)
    → (Client fragt dich direkt) → Transferticket
@@ -219,8 +219,8 @@ Die ursprüngliche Implementierung (Node.js ≥ 18, Puppeteer) liegt in `src/` u
 | `elster_kennziffern_list` | Returns the supported UStVA Kennziffern with descriptions | No |
 | `elster_ustva_generate_xml` | Generates a UStVA XML snapshot (archive only) | No |
 | `elster_ustva_detect_reverse_charge` | Detects §13b reverse-charge suppliers | No |
-| `elster_ustva_start` | Logs in, fills, runs Prüfung, then **pauses for confirmation** | Pauses |
-| `elster_ustva_confirm` | Clicks "Absenden" after you reviewed | **Yes** |
+| `elster_ustva_start` | Logs in, fills, runs Prüfung, saves a draft under „Meine Formulare“, then **pauses for confirmation** | Pauses |
+| `elster_ustva_confirm` | Reopens the saved draft, checks the send summary against the approved amounts, clicks "Absenden" | **Yes** |
 | `elster_eur_start` | Fills Anlage EÜR up to Prüfung, then "Speichern und Verlassen" | No |
 | `elster_est_start` | Opens ESt 1 A, fills basics, runs Prüfung, keeps browser open 30 min | No |
 | `elster_sync_history` | Reads "Übermittelte Formulare" (optionally with PDFs) | No |

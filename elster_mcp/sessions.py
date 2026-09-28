@@ -30,6 +30,8 @@ class Session:
     created_at: float = field(default_factory=time.time)
     #: Zusammenfassung dessen, was übermittelt würde (UStVA).
     summary: dict[str, Any] | None = None
+    #: In ELSTER gespeicherter Entwurf („Meine Formulare"): {"id", "name"}.
+    draft: dict[str, str] | None = None
     # interne Felder
     confirmation_code: str | None = None
     confirm_event: asyncio.Event = field(default_factory=asyncio.Event)
@@ -58,11 +60,14 @@ class Session:
         }
         if self.summary is not None:
             out["summary"] = self.summary
+        if self.draft is not None:
+            out["draft"] = self.draft
         if self.status == "AWAITING_CONFIRM" and self.confirmation_code:
             out["confirmationCode"] = self.confirmation_code
             out["hint"] = (
-                "Bitte Screenshot und Zusammenfassung prüfen. Übermittlung nur mit "
-                "elster_ustva_confirm(sessionId, confirmationCode)."
+                "Bitte Screenshot und Zusammenfassung prüfen. Der Entwurf liegt in ELSTER unter "
+                "„Meine Formulare“. Übermittlung nur mit elster_ustva_confirm(sessionId, confirmationCode) – "
+                "dabei wird genau dieser Entwurf geöffnet, gegen die Beträge geprüft und abgesendet."
             )
         return out
 
